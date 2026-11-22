@@ -1,0 +1,9 @@
+{
+  "extends": "@atlas/tsconfig/base.json",
+  "include": ["src/**/*", "test/**/*", "*.config.ts"],
+  "exclude": ["dist", "coverage", "node_modules"],
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["node"]
+  }
+}

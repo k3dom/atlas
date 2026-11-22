@@ -7,6 +7,8 @@ by complexity tier.
 
 ```
 packages/
+  atlas/     CLI that scopes and checks maps, and the Claude Code plugin with
+             the skill that builds them
   oxfmt/     shared oxfmt config
   oxlint/    shared oxlint config
   tsconfig/  shared TypeScript config
@@ -23,3 +25,6 @@ packages/
   lot of CPU and memory. Run it once when you have finished your changes, not
   after each edit.
 - Issues live as GitHub issues in `k3dom/atlas`, managed via the `gh` CLI.
+- `flake.nix` packages the CLI with the dependencies of `pnpm-lock.yaml`. When
+  they change, set the `hash` of `pnpmDeps` to `""`, run `nix build` and put in
+  the hash it reports.

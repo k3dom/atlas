@@ -1,0 +1,42 @@
+{
+  "name": "atlas",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "atlas": "./src/index.ts"
+  },
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*",
+    "#test/*": "./test/*",
+    "#package.json": "./package.json"
+  },
+  "scripts": {
+    "start": "node ./src/index.ts",
+    "test": "vitest run",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "effect-tsgo --tsrs-lint oxlint",
+    "check": "pnpm run lint && pnpm run format:check"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.5",
+    "effect": "4.1.5",
+    "oxc-parser": "0.159.0",
+    "oxc-resolver": "11.24.2"
+  },
+  "devDependencies": {
+    "@atlas/oxfmt": "workspace:*",
+    "@atlas/oxlint": "workspace:*",
+    "@atlas/tsconfig": "workspace:*",
+    "@atlas/vitest": "workspace:*",
+    "@effect/tsgo": "0.69.0",
+    "@effect/vitest": "4.1.5",
+    "@types/node": "26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "tsrs": "0.25.0-ts7.1.0-beta",
+    "vitest": "5.1.0"
+  }
+}
