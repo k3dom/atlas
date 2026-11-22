@@ -36,18 +36,34 @@ git doesn't track. The files behind those imports are missing from the map, so
 name them in your report. Read the files before you chunk them: names and paths
 alone don't show where the hard parts are.
 
-`atlas imports --root <root>... <file>...` lists which files in scope each file
+`atlas imports --root <root> <file>...` lists which files in scope each file
 imports and which import it, so you can see what a file works with before you
 choose its chunk. Imports through generated files, such as a route tree, count
-as imports of the files they import.
+as imports of the files they import. Repeat `--root` once per root, such as
+`--root packages/app --root packages/web`.
 
 For a scope of more than about a hundred files, delegate reading to subagents,
-one per package, or per area of related files where a directory holds more than
-about five thousand lines. Give each the whole `atlas scope` output, so it can
-rate its part against the rest, the file list of its part, the `atlas imports`
-command with the roots and this skill's rubric, and ask for proposed chunks with
-a summary, tier, rationale and essential share each. Merge their proposals into
-one map and even out the tiers across parts.
+one per part of about ten to fifteen thousand lines. Cut parts along the chunks
+you expect, so a subagent sees all layers of the concepts it maps: per package
+or per feature area, and in a package laid out by technical kind, such as
+`domain/`, `services/` and `tables/`, per group of related concepts across those
+directories rather than per directory. Give each subagent:
+
+- the whole `atlas scope` output, so it can rate its part against the rest
+- the file list of its part, each file of which goes into exactly one of its
+  chunks
+- the `atlas imports` command with the roots
+- this skill's Chunk and Rate sections, and the conventions that make the parts
+  fit together: the id prefix of each package and which groups to use
+- a path to write its proposal to, as JSON that maps each package to an array of
+  nodes as `atlas schema` describes them, so merging is mechanical
+
+Ask it to report its hardest chunks and their rationale, the cuts and tiers it
+was unsure of, and the files whose main concern lies in another part. Merge the
+proposals under one group per package and move those files to the chunk of their
+concern. Then even out the tiers across parts by reading the tier 3 and 4
+rationales of all parts side by side: subagents rate their own part, so the same
+kind of difficulty can land in different tiers.
 
 ## Chunk
 
@@ -77,18 +93,24 @@ endpoints of one feature that a router wires up.
 
 Rate the tier relative to the rest of the scope, not against an absolute scale,
 so the map shows where this codebase is hard. In a scope of a dozen chunks or
-more, expect some in every tier.
+more, expect some in every tier, though a part of a larger scope may have none
+in tier 1 or tier 4. Rate by what it takes to change the code safely, not by its
+size: a large chunk of plain screens or of data, such as seed records or tables
+of names, is tier 1 or 2.
 
 1. Straightforward. Declarations, wiring and thin glue, such as schemas without
    logic or commands that call one endpoint. A newcomer changes it safely.
 2. Ordinary logic. Branching and state that stay local, so reading the chunk is
-   enough to change it.
+   enough to change it. Tooling that no other chunk depends on, such as
+   benchmark harnesses, usually stays here even when it leans on the internals
+   of outside tools.
 3. Intricate. Invariants that span files or services, many interacting cases,
    concurrency or a protocol to follow. Changing it safely takes knowledge of
    other parts.
 4. The hardest code in the scope, where bugs hide and few people change things
-   with confidence. Keep this for the few hardest chunks, about a tenth of a
-   large scope.
+   with confidence, such as the access rules every query filters by or a
+   pipeline whose stages run concurrently in several processes. Keep this for
+   the few hardest chunks, about a tenth of a large scope.
 
 The rationale names what makes the chunk as hard as its tier, such as "Renders
 email for three clients and has to keep their quirks apart", not that it is
