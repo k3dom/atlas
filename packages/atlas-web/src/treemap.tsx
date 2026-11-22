@@ -1,5 +1,4 @@
-import type * as Artifact from 'atlas/artifact'
-import * as Atlas from 'atlas/artifact'
+import * as Artifact from 'atlas/artifact'
 import ReactECharts from 'echarts-for-react/lib/core'
 import { TreemapChart, type TreemapSeriesOption } from 'echarts/charts'
 import {
@@ -7,68 +6,73 @@ import {
   type TooltipComponentOption,
 } from 'echarts/components'
 import * as ECharts from 'echarts/core'
-import { use as register } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { Array, Order, Predicate } from 'effect'
 import { useMemo } from 'react'
 
 import * as Tier from '#/tier.ts'
 
-register([TreemapChart, TooltipComponent, CanvasRenderer])
+// oxlint-disable-next-line react/rules-of-hooks -- registers chart parts, not a hook
+ECharts.use([TreemapChart, TooltipComponent, CanvasRenderer])
 
-type Node = Artifact.Artifact['chunks'][number]
-type Item = NonNullable<TreemapSeriesOption['data']>[number]
+type Node = Artifact.Node<Artifact.MeasuredFile>
+
+const surface = '#fafaf9'
+const ink = '#1c1917'
+const groupBorder = '#d6d3d1'
+const selection = '#eb6834'
 
 const depth = (node: Node): number =>
   node.kind === 'group'
     ? 1 + Array.max(Array.map(node.children, depth), Order.Number)
     : 1
 
-const item = (node: Node): Item =>
+const item = (node: Node): NonNullable<TreemapSeriesOption['data']>[number] =>
   node.kind === 'group'
     ? {
         id: node.id,
         name: node.name,
         children: Array.map(node.children, item),
-        itemStyle: { borderColor: '#d6d3d1' },
+        itemStyle: { borderColor: groupBorder },
       }
     : {
         id: node.id,
         name: node.name,
-        value: Atlas.lines(node),
+        value: Artifact.lines(node),
         itemStyle: { color: Tier.color[node.tier] },
         label: { color: Tier.ink[node.tier] },
       }
 
+const nodeOf = (nodes: ReadonlyMap<string, Node>, params: unknown) => {
+  const data = Predicate.hasProperty(params, 'data') ? params.data : undefined
+  return Predicate.hasProperty(data, 'id') && Predicate.isString(data.id)
+    ? nodes.get(data.id)
+    : undefined
+}
+
 export const Treemap = ({
   artifact,
+  nodes,
   selected,
   onSelect,
 }: {
   readonly artifact: Artifact.Artifact
+  readonly nodes: ReadonlyMap<string, Node>
   readonly selected: string | undefined
   readonly onSelect: (id: string | undefined) => void
 }) => {
-  const byId = useMemo(
-    () => new Map(Array.map(Atlas.nodes(artifact.chunks), (n) => [n.id, n])),
-    [artifact]
-  )
-
   const option = useMemo(
     (): ECharts.ComposeOption<
       TreemapSeriesOption | TooltipComponentOption
     > => ({
       tooltip: {
         formatter: (params) => {
-          const data = (Array.isArray(params) ? params[0] : params)?.data
-          const node = Predicate.hasProperty(data, 'id')
-            ? byId.get(globalThis.String(data.id))
-            : undefined
+          const node = nodeOf(nodes, params)
           if (node === undefined) {
             return ''
           }
           const name = `<b>${ECharts.format.encodeHTML(node.name)}</b>`
-          const lines = `${Atlas.lines(node)} lines`
+          const lines = `${Artifact.lines(node)} lines`
           return node.kind === 'group'
             ? `${name}<br/>${lines}`
             : `${name}<br/>Tier ${node.tier}, ${Tier.label[node.tier]}<br/>${lines}`
@@ -90,13 +94,13 @@ export const Treemap = ({
           animationDurationUpdate: 500,
           breadcrumb: { left: 8, bottom: 8 },
           label: { formatter: '{b}' },
-          upperLabel: { show: true, height: 22, color: '#1c1917' },
-          itemStyle: { borderColor: '#fafaf9', borderWidth: 2, gapWidth: 2 },
-          select: { itemStyle: { borderColor: '#eb6834' } },
+          upperLabel: { show: true, height: 22, color: ink },
+          itemStyle: { borderColor: surface, borderWidth: 2, gapWidth: 2 },
+          select: { itemStyle: { borderColor: selection } },
         },
       ],
     }),
-    [artifact, byId]
+    [artifact, nodes]
   )
 
   return (
@@ -106,11 +110,8 @@ export const Treemap = ({
       notMerge
       style={{ width: '100%', height: '100%' }}
       onEvents={{
-        click: (
-          params: { readonly data?: { readonly id?: string } },
-          chart: ECharts.EChartsType
-        ) => {
-          const node = byId.get(params.data?.id ?? '')
+        click: (params: unknown, chart: ECharts.EChartsType) => {
+          const node = nodeOf(nodes, params)
           if (node === undefined) {
             return
           }

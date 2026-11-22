@@ -1,17 +1,16 @@
-import type * as Artifact from 'atlas/artifact'
-import * as Atlas from 'atlas/artifact'
-import { Array, Option, pipe, Result, Schema } from 'effect'
-import { useState, type ChangeEvent, type DragEvent } from 'react'
+import * as Artifact from 'atlas/artifact'
+import { Array, Result, Schema } from 'effect'
+import { useMemo, useState, type ChangeEvent, type DragEvent } from 'react'
 
 import { Details, Legend } from '#/details.tsx'
 import { Treemap } from '#/treemap.tsx'
 
-const ArtifactJson = Schema.fromJsonString(Atlas.Artifact)
+const ArtifactJson = Schema.fromJsonString(Artifact.Artifact)
 
 export const decode = (text: string) =>
   Result.mapError(
     Schema.decodeUnknownResult(ArtifactJson)(text, { errors: 'all' }),
-    (error) => Atlas.problems(error.issue)
+    (error) => Artifact.problems(error.issue)
   )
 
 const Problems = ({
@@ -45,11 +44,19 @@ const Problems = ({
 
 const Viewer = ({ artifact }: { readonly artifact: Artifact.Artifact }) => {
   const [selected, setSelected] = useState<string>()
+  const nodes = useMemo(
+    () =>
+      new Map(
+        Array.map(Artifact.nodes(artifact.chunks), (node) => [node.id, node])
+      ),
+    [artifact]
+  )
   return (
     <main className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1">
         <Treemap
           artifact={artifact}
+          nodes={nodes}
           selected={selected}
           onSelect={setSelected}
         />
@@ -57,11 +64,7 @@ const Viewer = ({ artifact }: { readonly artifact: Artifact.Artifact }) => {
       <aside className="w-96 shrink-0 overflow-y-auto border-l border-stone-200 bg-white p-5">
         <Details
           artifact={artifact}
-          node={pipe(
-            Atlas.nodes(artifact.chunks),
-            Array.findFirst((node) => node.id === selected),
-            Option.getOrUndefined
-          )}
+          node={selected === undefined ? undefined : nodes.get(selected)}
         />
       </aside>
     </main>
@@ -72,11 +75,17 @@ export const App = () => {
   const [loaded, setLoaded] = useState<{
     readonly name: string
     readonly result: ReturnType<typeof decode>
+    readonly count: number
   }>()
 
   const open = async (file: File | undefined) => {
     if (file !== undefined) {
-      setLoaded({ name: file.name, result: decode(await file.text()) })
+      const result = decode(await file.text())
+      setLoaded((previous) => ({
+        name: file.name,
+        result,
+        count: (previous?.count ?? 0) + 1,
+      }))
     }
   }
 
@@ -117,10 +126,7 @@ export const App = () => {
       ) : Result.isFailure(loaded.result) ? (
         <Problems name={loaded.name} problems={loaded.result.failure} />
       ) : (
-        <Viewer
-          key={`${loaded.name}@${loaded.result.success.commit}`}
-          artifact={loaded.result.success}
-        />
+        <Viewer key={loaded.count} artifact={loaded.result.success} />
       )}
     </div>
   )

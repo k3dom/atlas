@@ -1,11 +1,8 @@
-import type * as Artifact from 'atlas/artifact'
-import * as Atlas from 'atlas/artifact'
-import { Array, Number } from 'effect'
+import * as Artifact from 'atlas/artifact'
+import { Array, Number, String } from 'effect'
 import type { ReactNode } from 'react'
 
 import * as Tier from '#/tier.ts'
-
-type Node = Artifact.Artifact['chunks'][number]
 
 const Section = ({
   title,
@@ -22,7 +19,7 @@ const Section = ({
   </section>
 )
 
-const Swatch = ({ tier }: { readonly tier: Tier.Tier }) => (
+const Swatch = ({ tier }: { readonly tier: Artifact.Tier }) => (
   <span
     className="inline-block size-3 shrink-0 rounded-sm"
     style={{ backgroundColor: Tier.color[tier] }}
@@ -31,7 +28,7 @@ const Swatch = ({ tier }: { readonly tier: Tier.Tier }) => (
 
 export const Legend = () => (
   <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-stone-600">
-    {Array.map(Tier.all, (tier) => (
+    {Array.map(Artifact.Tier.literals, (tier) => (
       <li key={tier} className="flex items-center gap-1.5">
         <Swatch tier={tier} />
         {tier} {Tier.label[tier]}
@@ -47,10 +44,10 @@ export const Details = ({
   node,
 }: {
   readonly artifact: Artifact.Artifact
-  readonly node: Node | undefined
+  readonly node: Artifact.Node<Artifact.MeasuredFile> | undefined
 }) => {
   if (node === undefined) {
-    const chunks = Atlas.chunks(artifact.chunks)
+    const chunks = Artifact.chunks(artifact.chunks)
     return (
       <div className="flex flex-col gap-5">
         <h2 className="text-lg font-semibold">
@@ -58,9 +55,12 @@ export const Details = ({
         </h2>
         <p className="text-sm text-stone-600">
           {count(chunks.length, 'chunk')} with{' '}
-          {Number.sumAll(Array.map(artifact.chunks, Atlas.lines))} lines at
+          {Number.sumAll(Array.map(artifact.chunks, Artifact.lines))} lines at
           commit{' '}
-          <code className="font-mono">{artifact.commit.slice(0, 12)}</code>.
+          <code className="font-mono">
+            {String.slice(0, 12)(artifact.commit)}
+          </code>
+          .
         </p>
         <p className="text-sm text-stone-600">
           Select a chunk to see its details. Select a group by its header to
@@ -76,8 +76,8 @@ export const Details = ({
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold">{node.name}</h2>
           <p className="text-sm text-stone-600">
-            Group of {count(Atlas.chunks(node.children).length, 'chunk')} with{' '}
-            {Atlas.lines(node)} lines
+            Group of {count(Artifact.chunks(node.children).length, 'chunk')}{' '}
+            with {Artifact.lines(node)} lines
           </p>
         </div>
         <p>{node.summary}</p>
@@ -92,7 +92,8 @@ export const Details = ({
         <h2 className="text-lg font-semibold">{node.name}</h2>
         <p className="flex items-center gap-1.5 text-sm text-stone-600">
           <Swatch tier={node.tier} />
-          Tier {node.tier}, {Tier.label[node.tier]}, {Atlas.lines(node)} lines
+          Tier {node.tier}, {Tier.label[node.tier]}, {Artifact.lines(node)}{' '}
+          lines
         </p>
       </div>
       <p>{node.summary}</p>
