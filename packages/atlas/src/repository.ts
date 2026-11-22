@@ -3,6 +3,8 @@ import {
   Context,
   Effect,
   Layer,
+  Number,
+  Option,
   Path,
   pipe,
   Schema,
@@ -58,6 +60,11 @@ export class GitError extends Schema.TaggedError<GitError>()('GitError', {
   override get [CliError.userMessage](): string {
     return this.message
   }
+}
+
+export interface Stat {
+  readonly added: number
+  readonly deleted: number
 }
 
 const paths = (output: string) =>
@@ -142,7 +149,46 @@ export class Repository extends Context.Service<Repository>()(
         )
       })
 
-      return { root, relative, absolute, tracked, head, changed }
+      const has = Effect.fn('Repository.has')(function* (commit: string) {
+        return yield* run('cat-file', '-e', `${commit}^{commit}`).pipe(
+          Effect.as(true),
+          Effect.catchReason('GitError', 'CommandFailed', () =>
+            Effect.succeed(false)
+          )
+        )
+      })
+
+      const diff = Effect.fn('Repository.diff')(function* (commit: string) {
+        const fields = paths(
+          yield* run('diff', '--numstat', '-z', '-M', commit, '--')
+        )
+        const files: Array<{
+          readonly path: string
+          readonly from?: string | undefined
+          readonly stat: Option.Option<Stat>
+        }> = []
+        for (let index = 0; index < fields.length; index++) {
+          const parts = String.split(fields[index] ?? '', '\t')
+          const stat = Option.all({
+            added: Number.parse(parts[0] ?? ''),
+            deleted: Number.parse(parts[1] ?? ''),
+          })
+          const file = parts[2] ?? ''
+          if (String.isEmpty(file)) {
+            files.push({
+              from: fields[index + 1],
+              path: fields[index + 2] ?? '',
+              stat,
+            })
+            index += 2
+          } else {
+            files.push({ path: file, stat })
+          }
+        }
+        return files
+      })
+
+      return { root, relative, absolute, tracked, head, changed, has, diff }
     }),
   }
 ) {}

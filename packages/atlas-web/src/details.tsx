@@ -1,5 +1,5 @@
 import * as Artifact from 'atlas/artifact'
-import { Array, Number, String } from 'effect'
+import { Array, Number, pipe } from 'effect'
 import type { ReactNode } from 'react'
 
 import * as Tier from '#/tier.ts'
@@ -39,6 +39,46 @@ export const Legend = () => (
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
 
+export const history = (artifact: Artifact.Artifact, id: string) => {
+  const found: Array<{
+    readonly commit: string
+    readonly event: Artifact.Event
+  }> = []
+  let ids: ReadonlySet<string> = new Set([id])
+  for (const entry of pipe(
+    artifact.history,
+    Array.flatMap((update) =>
+      Array.map(update.events, (event) => ({ commit: update.commit, event }))
+    ),
+    Array.reverse
+  )) {
+    const targets = Artifact.targets(entry.event)
+    if (Array.some(targets, (target) => ids.has(target))) {
+      found.push(entry)
+      ids = new Set([
+        ...Array.filter(
+          Array.fromIterable(ids),
+          (known) => !Array.contains(targets, known)
+        ),
+        ...Artifact.sources(entry.event),
+      ])
+    }
+  }
+  return found
+}
+
+const describe = (event: Artifact.Event, id: string) =>
+  Artifact.Event.match(event, {
+    add: ({ chunk }) => (chunk === id ? 'Added' : `Added as ${chunk}`),
+    remove: ({ chunk }) => `Removed ${chunk}`,
+    revise: ({ chunk }) => (chunk === id ? 'Revised' : `Revised as ${chunk}`),
+    rename: ({ from, to }) =>
+      to === id ? `Renamed from ${from}` : `Renamed from ${from} to ${to}`,
+    split: ({ from, into }) =>
+      `Split from ${from} into ${Array.join(into, ', ')}`,
+    merge: ({ from, into }) => `Merged ${Array.join(from, ', ')} into ${into}`,
+  })
+
 export const Details = ({
   artifact,
   node,
@@ -57,10 +97,7 @@ export const Details = ({
           {count(chunks.length, 'chunk')} with{' '}
           {Number.sumAll(Array.map(artifact.chunks, Artifact.lines))} lines at
           commit{' '}
-          <code className="font-mono">
-            {String.slice(0, 12)(artifact.commit)}
-          </code>
-          .
+          <code className="font-mono">{Artifact.short(artifact.commit)}</code>.
         </p>
         <p className="text-sm text-stone-600">
           Select a chunk to see its details. Select a group by its header to
@@ -86,6 +123,7 @@ export const Details = ({
   }
 
   const essential = node.essential
+  const events = history(artifact, node.id)
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1">
@@ -110,6 +148,25 @@ export const Details = ({
           <span>{100 - essential}% accidental</span>
         </p>
       </Section>
+      {Array.isArrayNonEmpty(events) && (
+        <Section title="History">
+          <ol className="flex flex-col gap-3">
+            {Array.map(events, ({ commit, event }, index) => (
+              <li key={index} className="flex flex-col gap-0.5 text-sm">
+                <p className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium">
+                    {describe(event, node.id)}
+                  </span>
+                  <code className="font-mono text-xs text-stone-500">
+                    {Artifact.short(commit)}
+                  </code>
+                </p>
+                <p className="text-stone-700">{event.reason}</p>
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
       <Section title={count(node.files.length, 'file')}>
         <ul className="flex flex-col gap-1 text-sm">
           {Array.map(node.files, (file) => (

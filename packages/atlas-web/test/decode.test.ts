@@ -35,7 +35,22 @@ const map: typeof Artifact.Artifact.Encoded = {
 
 describe('decode', () => {
   it('reads the map that check writes', () => {
-    assertSuccess(decode(JSON.stringify(map, null, 2)), map)
+    const updated = {
+      ...map,
+      history: [
+        {
+          commit: '140f5a4d5a1c0e4f7b0e6b1f1f9d4c1b2a3e4f50',
+          events: [
+            { kind: 'revise', chunk: 'routes', reason: 'Routes got a page.' },
+          ],
+        },
+      ],
+    } as const
+    assertSuccess(decode(JSON.stringify(updated, null, 2)), updated)
+  })
+
+  it('reads a map without history as one with no updates', () => {
+    assertSuccess(decode(JSON.stringify(map)), { ...map, history: [] })
   })
 
   it('names every field of a map that breaks the schema', () => {

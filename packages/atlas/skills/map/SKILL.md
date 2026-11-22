@@ -3,10 +3,12 @@ name: map
 description:
   Use this skill when the user asks to map, chart or rate the complexity of a
   codebase or a part of it, such as a package and the workspace code it imports,
-  or to build an atlas map in `.atlas/map.json`. Explores the code and its
-  imports with the atlas CLI, groups its files into semantic chunks, scores each
-  chunk against a four-tier rubric and validates the map with `atlas check`. Do
-  not use for source maps, dependency graphs or architecture diagrams.
+  or to build or update an atlas map in `.atlas/map.json`. Explores the code and
+  its imports with the atlas CLI, groups its files into semantic chunks, scores
+  each chunk against a four-tier rubric and validates the map with `atlas
+  check`. Updates an existing map from the files that changed since its commit
+  and records why each chunk changed. Do not use for source maps, dependency
+  graphs or architecture diagrams.
 ---
 
 # Map
@@ -24,6 +26,11 @@ CLI with `nix profile install git+ssh://git@github.com/k3dom/atlas` and stop.
 Work from the root of the repository you map. The scope is a set of root
 directories, usually packages. Take them from the request, and ask when the
 request names no part of the codebase.
+
+If the repository has a map in `.atlas/map.json`, update it as Update describes
+instead of building a new one, so the ids of its chunks stay stable and every
+change to it has a recorded reason. Build a new map only when the user asks for
+one, and delete the old map first, since `check` compares a draft with it.
 
 ## Explore
 
@@ -118,6 +125,51 @@ email for three clients and has to keep their quirks apart", not that it is
 demands, such as domain rules and protocols. The rest is accidental, such as
 framework workarounds, indirection and duplication.
 
+## Update
+
+`atlas changes` lists the files in scope that were added, changed, renamed or
+removed since the commit of the map, under the chunk each is in and with new
+files under "In no chunk". The scope comes from the roots of the map. If no file
+changed, report that the map is current and stop. `check` records the events of
+an update at the current commit, so it refuses them while files in scope have
+uncommitted changes. Ask the user to commit those first.
+
+Start the draft from the map with `atlas draft > .atlas/draft.json` and change
+only what the changes call for:
+
+- Read the diff of each changed file with `git diff <commit> -- <file>`, using
+  the commit `changes` names, and each added file in full.
+  `atlas imports --draft .atlas/draft.json <file>` shows which chunks a new file
+  works with.
+- Put each added file in the chunk of its main concern, or in a new chunk when
+  it holds a concept of its own. Give a renamed file its new path in its chunk,
+  and drop removed files.
+- Rate the chunks the changes touch again as Rate describes, against the
+  untouched chunks around them, and update a summary or rationale only where the
+  code changed what it says. Leave the untouched chunks and every id as they
+  are.
+- Split a chunk that now holds several concepts or has outgrown the size of a
+  chunk, merge chunks whose code has become one concept, and rename a chunk
+  whose concept now goes by another name. Don't redo cuts the changes don't call
+  for.
+
+Record each change to a chunk as an event in `events`, with a reason that names
+the change to the code behind it, such as "bundles.ts builds the Lambda bundles
+the preview deploys, which preview.ts used to build itself":
+
+- `add` for a new chunk and `remove` for one with no files left
+- `rename` for a chunk that goes on under a new id
+- `split` and `merge` for chunks whose files now make up more or fewer chunks.
+  The chunk that carries the concept on keeps its id
+- `revise` for a chunk that keeps its id and changes otherwise, such as in its
+  files, tier or rationale
+
+A chunk takes part in at most one event, so a split that also rates the chunk
+that keeps its id again is a single split. Groups need no events, so regroup
+chunks freely. `atlas schema` describes the events. Then write and check the
+draft as below. `check` rejects events that name chunks the map or the draft
+doesn't have, and lists the chunks that changed without an event.
+
 ## Write and check
 
 `atlas schema` prints the JSON Schema of the draft. Write the draft to
@@ -132,4 +184,5 @@ reports the difference as missing files and files in no chunk, so run
 
 You are done when `check` has written the map. Report its path, the summary
 `check` printed, the tier 4 chunks with their rationale and the imports `scope`
-could not follow. Leave committing the map to the user.
+could not follow. For an update, report the events with their reasons instead of
+the tier 4 chunks. Leave committing the map to the user.
