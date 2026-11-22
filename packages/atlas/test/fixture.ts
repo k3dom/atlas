@@ -23,7 +23,10 @@ const files = {
   ),
   'packages/app/src/local.ts': lines('export const local = 1'),
   'packages/app/src/lazy.ts': lines('export const lazy = 1'),
-  'packages/app/src/page.ts': lines('export const page = 1'),
+  'packages/app/src/page.ts': lines(
+    "import { local } from './local.ts'",
+    'export const page = local'
+  ),
   'packages/app/src/routes.gen.ts': lines(
     '// This file was automatically generated. Do not edit.',
     "import { page } from './page.ts'",

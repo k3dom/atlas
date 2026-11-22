@@ -20,17 +20,23 @@ export interface File {
   readonly lines: number
 }
 
-export interface Import {
+export interface Specifier {
   readonly from: string
   readonly specifier: string
+}
+
+export interface Import {
+  readonly from: string
+  readonly to: string
 }
 
 export interface Scope {
   readonly roots: Array.NonEmptyReadonlyArray<string>
   readonly files: ReadonlyArray<File>
+  readonly imports: ReadonlyArray<Import>
   readonly generated: ReadonlyArray<string>
-  readonly unresolved: ReadonlyArray<Import>
-  readonly untracked: ReadonlyArray<Import>
+  readonly unresolved: ReadonlyArray<Specifier>
+  readonly untracked: ReadonlyArray<Specifier>
 }
 
 export class RootError extends Schema.TaggedError<RootError>()('RootError', {
@@ -155,12 +161,16 @@ export const resolve = Effect.fn('Scope.resolve')(function* (
         /@generated\b|\b(?:this|the) (?:file|code) (?:is|was|has been) (?:automatically |auto-?)generated\b|\bauto-?generated (?:file|code)\b|\bdo not (?:edit|modify) (?:this file|manually)\b/iu.test(
           String.slice(0, 1000)(source)
         ),
-      follow: Array.flatMapNullishOr(imports, ({ target }) =>
-        Predicate.isNotUndefined(target) &&
-        inWorkspace(target) &&
-        tracked.has(target)
-          ? target
-          : undefined
+      follow: pipe(
+        imports,
+        Array.flatMapNullishOr(({ target }) =>
+          Predicate.isNotUndefined(target) &&
+          inWorkspace(target) &&
+          tracked.has(target)
+            ? target
+            : undefined
+        ),
+        Array.dedupe
       ),
       unresolved: Array.filter(
         imports,
@@ -180,8 +190,9 @@ export const resolve = Effect.fn('Scope.resolve')(function* (
   const seen = new Set<string>(Array.flatten(starts))
   const files: Array<File> = []
   const generated: Array<string> = []
-  const unresolved: Array<Import> = []
-  const untracked: Array<Import> = []
+  const unresolved: Array<Specifier> = []
+  const untracked: Array<Specifier> = []
+  const edges: Array<Import> = []
   let frontier = Array.fromIterable(seen)
   while (Array.isArrayNonEmpty(frontier)) {
     const visited = yield* Effect.forEach(frontier, visit, {
@@ -197,6 +208,7 @@ export const resolve = Effect.fn('Scope.resolve')(function* (
       unresolved.push(...result.unresolved)
       untracked.push(...result.untracked)
       for (const target of result.follow) {
+        edges.push({ from: result.file.path, to: target })
         if (!seen.has(target)) {
           seen.add(target)
           frontier.push(target)
@@ -205,11 +217,35 @@ export const resolve = Effect.fn('Scope.resolve')(function* (
     }
   }
 
+  const outgoing = Array.groupBy(edges, (edge) => edge.from)
+  const isGenerated = new Set(generated)
+  // Imports through generated files, such as route trees, count as imports of
+  // the files they import
+  const targets = (file: string, passed: Set<string>): Array<string> =>
+    Array.flatMap(outgoing[file] ?? [], ({ to }) => {
+      if (!isGenerated.has(to)) {
+        return [to]
+      }
+      if (passed.has(to)) {
+        return []
+      }
+      passed.add(to)
+      return targets(to, passed)
+    })
+
   return {
     roots,
     files: Array.sort(
       files,
       Order.mapInput(Order.String, (file: File) => file.path)
+    ),
+    imports: Array.flatMap(files, (file) =>
+      pipe(
+        targets(file.path, new Set()),
+        Array.dedupe,
+        Array.filter((to) => to !== file.path),
+        Array.map((to) => ({ from: file.path, to }))
+      )
     ),
     generated: Array.sort(generated, Order.String),
     unresolved: Array.map(unresolved, ({ from, specifier }) => ({

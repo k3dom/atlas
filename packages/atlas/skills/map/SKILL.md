@@ -3,10 +3,10 @@ name: map
 description:
   Use this skill when the user asks to map, chart or rate the complexity of a
   codebase or a part of it, such as a package and the workspace code it imports,
-  or to build an atlas map in `.atlas/map.json`. Explores the code with the
-  atlas CLI, groups its files into semantic chunks, scores each chunk against a
-  four-tier rubric and validates the map with `atlas check`. Do not use for
-  source maps, dependency graphs or architecture diagrams.
+  or to build an atlas map in `.atlas/map.json`. Explores the code and its
+  imports with the atlas CLI, groups its files into semantic chunks, scores each
+  chunk against a four-tier rubric and validates the map with `atlas check`. Do
+  not use for source maps, dependency graphs or architecture diagrams.
 ---
 
 # Map
@@ -36,13 +36,18 @@ git doesn't track. The files behind those imports are missing from the map, so
 name them in your report. Read the files before you chunk them: names and paths
 alone don't show where the hard parts are.
 
+`atlas imports --root <root>... <file>...` lists which files in scope each file
+imports and which import it, so you can see what a file works with before you
+choose its chunk. Imports through generated files, such as a route tree, count
+as imports of the files they import.
+
 For a scope of more than about a hundred files, delegate reading to subagents,
 one per package, or per area of related files where a directory holds more than
 about five thousand lines. Give each the whole `atlas scope` output, so it can
-rate its part against the rest, the file list of its part and this skill's
-rubric, and ask for proposed chunks with a summary, tier, rationale and
-essential share each. Merge their proposals into one map and even out the tiers
-across parts.
+rate its part against the rest, the file list of its part, the `atlas imports`
+command with the roots and this skill's rubric, and ask for proposed chunks with
+a summary, tier, rationale and essential share each. Merge their proposals into
+one map and even out the tiers across parts.
 
 ## Chunk
 
@@ -56,6 +61,17 @@ main concern with `"mixed": true`.
 
 Give each node an id in kebab case that names its concept, such as
 `club-messages-delivery`, so it stays the same when the map is updated.
+
+Use the imports to cluster: files that import each other a lot usually belong
+together, and a file imported from many chunks is often a shared layer of its
+own. Once the draft is written, `atlas imports --draft .atlas/draft.json` shows
+the coupling between its chunks and the parts each chunk falls into, and with
+files after it, labels their imports and dependents with their chunks.
+Reconsider chunks that import each other in both directions or many times
+compared with the imports inside them, since they may be one concept, and chunks
+that split into several parts, since they may be several. Keep a chunk as it is
+when its files belong together for a reason imports don't show, such as
+endpoints of one feature that a router wires up.
 
 ## Rate
 
@@ -83,8 +99,9 @@ framework workarounds, indirection and duplication.
 ## Write and check
 
 `atlas schema` prints the JSON Schema of the draft. Write the draft to
-`.atlas/draft.json` and run `atlas check .atlas/draft.json`. Line counts and the
-commit are measured by `check`, so the draft holds neither.
+`.atlas/draft.json`, review its coupling as described under Chunk, and run
+`atlas check .atlas/draft.json`. Line counts and the commit are measured by
+`check`, so the draft holds neither.
 
 Fix what `check` reports and run it again until it writes `.atlas/map.json`,
 then delete the draft. If the code changed since you ran `atlas scope`, `check`
