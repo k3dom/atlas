@@ -32,6 +32,7 @@ const map = {
       files: [{ path: 'packages/app/src/index.ts', lines: 7 }],
     },
   ],
+  history: [],
 } as const
 
 const writeMap = Effect.fnUntraced(function* (file: string, value: unknown) {
