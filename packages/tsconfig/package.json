@@ -1,0 +1,22 @@
+{
+  "name": "@atlas/tsconfig",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base.json": "./src/base.json",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "pnpm run format:check"
+  },
+  "devDependencies": {
+    "@atlas/oxfmt": "workspace:*",
+    "oxfmt": "0.78.0"
+  }
+}

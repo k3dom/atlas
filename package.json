@@ -1,0 +1,19 @@
+{
+  "name": "atlas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "format": "oxfmt AGENTS.md README.md oxfmt.config.ts package.json tsconfig.json turbo.json",
+    "format:check": "oxfmt --check AGENTS.md README.md oxfmt.config.ts package.json tsconfig.json turbo.json",
+    "check": "pnpm run format:check && turbo run check"
+  },
+  "devDependencies": {
+    "@atlas/oxfmt": "workspace:*",
+    "oxfmt": "0.78.0",
+    "oxlint-tsgolint": "7.0.2007",
+    "tsrs": "0.25.0-ts7.1.0-beta",
+    "turbo": "2.11.11"
+  },
+  "packageManager": "pnpm@12.21.0"
+}

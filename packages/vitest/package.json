@@ -1,0 +1,26 @@
+{
+  "name": "@atlas/vitest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.js",
+  "exports": "./src/index.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "pnpm run format:check"
+  },
+  "devDependencies": {
+    "@atlas/oxfmt": "workspace:*",
+    "@vitest/coverage-v8": "5.1.0",
+    "oxfmt": "0.78.0",
+    "vitest": "5.1.0"
+  },
+  "peerDependencies": {
+    "@vitest/coverage-v8": "^5.0.0",
+    "vitest": "^5.0.0"
+  }
+}

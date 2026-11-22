@@ -1,0 +1,25 @@
+{
+  "name": "@atlas/oxfmt",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base": "./src/base.ts",
+    "./tailwind": "./src/tailwind.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "pnpm run format:check"
+  },
+  "devDependencies": {
+    "oxfmt": "0.78.0"
+  },
+  "peerDependencies": {
+    "oxfmt": "^0.78.0"
+  }
+}

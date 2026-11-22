@@ -1,0 +1,22 @@
+# Dependencies
+node_modules
+pnpm-debug.log*
+
+# Build
+dist
+coverage
+.turbo
+*.tsbuildinfo
+
+# Env
+.env
+.env*.local
+*.local
+.direnv
+
+# IDE
+.vscode
+.idea
+.vitest
+.DS_Store
+result

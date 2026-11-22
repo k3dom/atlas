@@ -1,0 +1,35 @@
+{
+  "name": "@atlas/oxlint",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./base": "./src/base.ts",
+    "./effect": "./src/effect.ts",
+    "./react": "./src/react.ts",
+    "./tailwind": "./src/tailwind.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepare": "effect-tsgo patch --no-typescript --oxlint --tsrs",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "pnpm run format:check"
+  },
+  "dependencies": {
+    "@effect/tsgo": "0.69.0"
+  },
+  "devDependencies": {
+    "@atlas/oxfmt": "workspace:*",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "tsrs": "0.25.0-ts7.1.0-beta"
+  },
+  "peerDependencies": {
+    "oxlint": "^1.93.0"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "tsconfig - Base",
+  "compilerOptions": {
+    "tsBuildInfoFile": "${configDir}/node_modules/.tmp/tsconfig.tsbuildinfo",
+
+    "module": "preserve",
+    "target": "esnext",
+    "types": [],
+    "jsx": "react-jsx",
+    "noEmit": true,
+    // tsrs defaults to 4 type checkers that each rebuild Effect's types. That
+    // doubles CPU time and memory without making a lint finish sooner, and
+    // swamps the machine when agents lint in parallel.
+    "checkers": 1,
+    "allowImportingTsExtensions": true,
+
+    "skipLibCheck": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "moduleResolution": "bundler",
+
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // TypeScript ignores this entry. The `effecttsgo` rules in oxlint read
+    // their options from it, since oxlint passes them none. Oxlint owns their
+    // severities and runs them regardless of `diagnostics`, which only stops
+    // the Effect language server from reporting them again at its defaults.
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": false,
+        "effectFn": ["span", "untraced"]
+      }
+    ]
+  }
+}
