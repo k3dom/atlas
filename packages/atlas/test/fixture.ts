@@ -1,4 +1,15 @@
-import { Array, Effect, FileSystem, Path, Record, Stream, String } from 'effect'
+import {
+  Array,
+  Effect,
+  FileSystem,
+  Filter,
+  Option,
+  Path,
+  pipe,
+  Record,
+  Stream,
+  String,
+} from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 
 const lines = (...text: ReadonlyArray<string>) =>
@@ -93,19 +104,30 @@ export const workspace = Effect.gen(function* () {
   return { root, commit: String.trim(yield* git('rev-parse', 'HEAD')) }
 })
 
+const spawn = Effect.fnUntraced(function* (
+  cwd: string,
+  args: ReadonlyArray<string>
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+  const path = yield* Path.Path
+  return yield* spawner.spawn(
+    ChildProcess.make(
+      'node',
+      [path.join(import.meta.dirname, '../src/index.ts'), ...args],
+      {
+        cwd,
+        env: { ATLAS_VIEWER: path.join(import.meta.dirname, 'viewer') },
+        extendEnv: true,
+      }
+    )
+  )
+})
+
 export const atlas = Effect.fnUntraced(function* (
   cwd: string,
   ...args: ReadonlyArray<string>
 ) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-  const path = yield* Path.Path
-  const handle = yield* spawner.spawn(
-    ChildProcess.make(
-      'node',
-      [path.join(import.meta.dirname, '../src/index.ts'), ...args],
-      { cwd }
-    )
-  )
+  const handle = yield* spawn(cwd, args)
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
       Stream.mkString(Stream.decodeText(handle.stdout)),
@@ -116,3 +138,28 @@ export const atlas = Effect.fnUntraced(function* (
   )
   return { stdout, stderr, exitCode }
 }, Effect.scoped)
+
+export const serve = Effect.fnUntraced(function* (
+  cwd: string,
+  ...args: ReadonlyArray<string>
+) {
+  const handle = yield* spawn(cwd, ['serve', '--no-open', ...args])
+  const url = yield* handle.stderr.pipe(
+    Stream.decodeText,
+    Stream.splitLines,
+    Stream.filterMap(
+      Filter.fromPredicateOption((line: string) =>
+        pipe(
+          line,
+          String.match(/ at (http:\/\/\S+)$/),
+          Option.flatMap((match) => Option.fromNullishOr(match[1]))
+        )
+      )
+    ),
+    Stream.runHead
+  )
+  return yield* Option.match(url, {
+    onNone: () => Effect.die('atlas serve stopped before it printed its URL'),
+    onSome: Effect.succeed,
+  })
+})

@@ -12,7 +12,39 @@
           }
       );
   in {
-    packages = eachSupportedSystem ({pkgs}: {
+    packages = eachSupportedSystem ({pkgs}: rec {
+      viewer = pkgs.stdenv.mkDerivation (finalAttrs: {
+        pname = "atlas-viewer";
+        version = (builtins.fromJSON (builtins.readFile ./packages/atlas-web/package.json)).version;
+        src = ./.;
+
+        pnpmWorkspaces = ["atlas-web..."];
+        pnpmDeps = pkgs.fetchPnpmDeps {
+          inherit (finalAttrs) pname version src pnpmWorkspaces;
+          pnpm = pkgs.pnpm_12;
+          fetcherVersion = 5;
+          hash = "sha256-+ZgyDXVIhhjMMuKXc3V5HJo2p/hKpYGHmiYJWGj5FpQ=";
+        };
+
+        nativeBuildInputs = with pkgs; [
+          nodejs_26
+          pnpm_12
+          pnpmConfigHook
+        ];
+
+        buildPhase = ''
+          runHook preBuild
+          pnpm --filter atlas-web build
+          runHook postBuild
+        '';
+
+        installPhase = ''
+          runHook preInstall
+          cp -r packages/atlas-web/dist $out
+          runHook postInstall
+        '';
+      });
+
       default = pkgs.stdenv.mkDerivation (finalAttrs: {
         pname = "atlas";
         version = (builtins.fromJSON (builtins.readFile ./packages/atlas/package.json)).version;
@@ -38,9 +70,10 @@
 
         installPhase = ''
           runHook preInstall
-          mkdir -p $out/lib/atlas/packages
+          mkdir -p $out/lib/atlas/packages/atlas-web
           cp -r node_modules $out/lib/atlas/
           cp -r packages/atlas $out/lib/atlas/packages/
+          cp -r ${viewer} $out/lib/atlas/packages/atlas-web/dist
           makeWrapper ${pkgs.nodejs_26}/bin/node $out/bin/atlas \
             --add-flags $out/lib/atlas/packages/atlas/src/index.ts \
             --prefix PATH : ${pkgs.git}/bin
