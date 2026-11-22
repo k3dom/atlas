@@ -1,0 +1,47 @@
+{
+  "name": "atlas-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "effect-tsgo --tsrs-lint oxlint",
+    "check": "pnpm run lint && pnpm run format:check"
+  },
+  "dependencies": {
+    "atlas": "workspace:*",
+    "echarts": "6.1.0",
+    "echarts-for-react": "3.1.0",
+    "effect": "4.1.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@atlas/oxfmt": "workspace:*",
+    "@atlas/oxlint": "workspace:*",
+    "@atlas/tsconfig": "workspace:*",
+    "@atlas/vitest": "workspace:*",
+    "@effect/tsgo": "0.69.0",
+    "@effect/vitest": "4.1.5",
+    "@tailwindcss/vite": "4.3.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "@vitest/coverage-v8": "5.1.0",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "oxlint-tailwindcss": "1.17.2",
+    "tailwindcss": "4.3.5",
+    "tsrs": "0.25.0-ts7.1.0-beta",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}

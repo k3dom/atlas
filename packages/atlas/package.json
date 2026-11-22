@@ -11,6 +11,9 @@
     "#test/*": "./test/*",
     "#package.json": "./package.json"
   },
+  "exports": {
+    "./artifact": "./src/artifact.ts"
+  },
   "scripts": {
     "start": "node ./src/index.ts",
     "test": "vitest run",

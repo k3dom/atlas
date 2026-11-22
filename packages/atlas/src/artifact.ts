@@ -1,4 +1,12 @@
-import { Array, Schema } from 'effect'
+import {
+  Array,
+  Number,
+  pipe,
+  Predicate,
+  Schema,
+  SchemaIssue,
+  String,
+} from 'effect'
 
 export interface Group<File> {
   readonly kind: 'group'
@@ -138,3 +146,39 @@ export const mapFiles = <A, B>(
       ? { ...node, children: mapFiles(node.children, f) }
       : { ...node, files: Array.map(node.files, f) }
   )
+
+const formatPath = (
+  path: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>
+) =>
+  pipe(
+    path,
+    Array.map((segment, index) => {
+      const key = Predicate.isObject(segment) ? segment.key : segment
+      if (Predicate.isNumber(key)) {
+        return `[${key}]`
+      }
+      return index === 0 ? globalThis.String(key) : `.${globalThis.String(key)}`
+    }),
+    Array.join('')
+  )
+
+export const problems = (
+  issue: SchemaIssue.Issue
+): Array.NonEmptyReadonlyArray<string> =>
+  pipe(
+    SchemaIssue.makeFormatterStandardSchemaV1()(issue).issues,
+    Array.map(({ path = [], message }) =>
+      Array.isReadonlyArrayNonEmpty(path)
+        ? `${formatPath(path)}: ${message}`
+        : message
+    ),
+    (messages) =>
+      Array.isArrayNonEmpty(messages)
+        ? messages
+        : [String.trim(SchemaIssue.makeFormatterDefault()(issue))]
+  )
+
+export const lines = (node: Node<{ readonly lines: number }>): number =>
+  node.kind === 'group'
+    ? Number.sumAll(Array.map(node.children, lines))
+    : Number.sumAll(Array.map(node.files, (file) => file.lines))
