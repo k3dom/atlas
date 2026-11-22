@@ -55,8 +55,8 @@ directories rather than per directory. Give each subagent:
 - the `atlas imports` command with the roots
 - this skill's Chunk and Rate sections, and the conventions that make the parts
   fit together: the id prefix of each package and which groups to use
-- a path to write its proposal to, as JSON that maps each package to an array
-  of nodes as `atlas schema` describes them, so merging is mechanical
+- a path to write its proposal to, as JSON that maps each package to an array of
+  nodes as `atlas schema` describes them, so merging is mechanical
 
 Ask it to report its hardest chunks and their rationale, the cuts and tiers it
 was unsure of, and the files whose main concern lies in another part. Merge the
