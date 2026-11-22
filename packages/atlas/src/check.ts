@@ -1,14 +1,4 @@
-import {
-  Array,
-  Effect,
-  FileSystem,
-  pipe,
-  Predicate,
-  Record,
-  Schema,
-  SchemaIssue,
-  String,
-} from 'effect'
+import { Array, Effect, FileSystem, pipe, Record, Schema } from 'effect'
 import { CliError } from 'effect/cli'
 
 import * as Artifact from '#/artifact.ts'
@@ -113,21 +103,6 @@ const problems = Effect.fnUntraced(function* (
   return [...ids, ...Array.flatten(files), ...unassigned]
 })
 
-const formatPath = (
-  path: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>
-) =>
-  pipe(
-    path,
-    Array.map((segment, index) => {
-      const key = Predicate.isObject(segment) ? segment.key : segment
-      if (Predicate.isNumber(key)) {
-        return `[${key}]`
-      }
-      return index === 0 ? globalThis.String(key) : `.${globalThis.String(key)}`
-    }),
-    Array.join('')
-  )
-
 export const read = Effect.fn('Check.read')(function* (
   draftPath: string,
   command: DraftError['command']
@@ -143,18 +118,7 @@ export const read = Effect.fn('Check.read')(function* (
         new DraftError({
           draft: draftPath,
           command,
-          problems: pipe(
-            SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues,
-            Array.map(({ path = [], message }) =>
-              Array.isReadonlyArrayNonEmpty(path)
-                ? `${formatPath(path)}: ${message}`
-                : message
-            ),
-            (messages) =>
-              Array.isArrayNonEmpty(messages)
-                ? messages
-                : [String.trim(error.message)]
-          ),
+          problems: Artifact.problems(error.issue),
         })
     )
   )

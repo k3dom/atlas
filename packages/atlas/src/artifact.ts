@@ -1,4 +1,12 @@
-import { Array, Schema } from 'effect'
+import {
+  Array,
+  Number,
+  pipe,
+  Predicate,
+  Schema,
+  SchemaIssue,
+  String,
+} from 'effect'
 
 export interface Group<File> {
   readonly kind: 'group'
@@ -13,13 +21,17 @@ export interface Chunk<File> {
   readonly id: string
   readonly name: string
   readonly summary: string
-  readonly tier: 1 | 2 | 3 | 4
+  readonly tier: Tier
   readonly rationale: string
   readonly essential: number
   readonly files: Array.NonEmptyReadonlyArray<File>
 }
 
 export type Node<File> = Group<File> | Chunk<File>
+
+export const Tier = Schema.Literals([1, 2, 3, 4])
+
+export type Tier = typeof Tier.Type
 
 const Text = Schema.String.check(Schema.isNonEmpty(), Schema.isTrimmed())
 
@@ -47,7 +59,7 @@ const tree = <File>(File: Schema.Codec<File>) => {
     Schema.Struct({
       kind: Schema.Literal('chunk'),
       ...common,
-      tier: Schema.Literals([1, 2, 3, 4]).annotate({
+      tier: Tier.annotate({
         description:
           'How hard the chunk is to understand and change safely, relative to the rest of the codebase, from 1 (straightforward) to 4 (the hardest)',
       }),
@@ -94,21 +106,21 @@ export const Draft = Schema.Struct({
 
 export type Draft = typeof Draft.Type
 
+const MeasuredFile = Schema.Struct({
+  path: Path,
+  lines: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  mixed,
+})
+
+export type MeasuredFile = typeof MeasuredFile.Type
+
 export const Artifact = Schema.Struct({
   version: Schema.Literal(1),
   commit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/u)).annotate({
     description: 'SHA of the commit the map describes',
   }),
   roots,
-  chunks: Schema.NonEmptyArray(
-    tree(
-      Schema.Struct({
-        path: Path,
-        lines: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-        mixed,
-      })
-    )
-  ),
+  chunks: Schema.NonEmptyArray(tree(MeasuredFile)),
 }).annotate({
   title: 'Atlas map',
   description:
@@ -138,3 +150,39 @@ export const mapFiles = <A, B>(
       ? { ...node, children: mapFiles(node.children, f) }
       : { ...node, files: Array.map(node.files, f) }
   )
+
+const formatPath = (
+  path: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>
+) =>
+  pipe(
+    path,
+    Array.map((segment, index) => {
+      const key = Predicate.isObject(segment) ? segment.key : segment
+      if (Predicate.isNumber(key)) {
+        return `[${key}]`
+      }
+      return index === 0 ? globalThis.String(key) : `.${globalThis.String(key)}`
+    }),
+    Array.join('')
+  )
+
+export const problems = (
+  issue: SchemaIssue.Issue
+): Array.NonEmptyReadonlyArray<string> =>
+  pipe(
+    SchemaIssue.makeFormatterStandardSchemaV1()(issue).issues,
+    Array.map(({ path = [], message }) =>
+      Array.isReadonlyArrayNonEmpty(path)
+        ? `${formatPath(path)}: ${message}`
+        : message
+    ),
+    (messages) =>
+      Array.isArrayNonEmpty(messages)
+        ? messages
+        : [String.trim(SchemaIssue.makeFormatterDefault()(issue))]
+  )
+
+export const lines = (node: Node<{ readonly lines: number }>): number =>
+  node.kind === 'group'
+    ? Number.sumAll(Array.map(node.children, lines))
+    : Number.sumAll(Array.map(node.files, (file) => file.lines))

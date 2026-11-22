@@ -9,6 +9,7 @@ by complexity tier.
 packages/
   atlas/     CLI that scopes and checks maps, and the Claude Code plugin with
              the skill that builds them
+  atlas-web/ Vite and React viewer that shows a map as a treemap
   oxfmt/     shared oxfmt config
   oxlint/    shared oxlint config
   tsconfig/  shared TypeScript config
