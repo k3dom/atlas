@@ -1,4 +1,4 @@
-import { type Array, Schema } from 'effect'
+import { Array, Schema } from 'effect'
 
 export interface Group<File> {
   readonly kind: 'group'
@@ -116,3 +116,25 @@ export const Artifact = Schema.Struct({
 })
 
 export type Artifact = typeof Artifact.Type
+
+export const nodes = <File>(
+  forest: ReadonlyArray<Node<File>>
+): Array<Node<File>> =>
+  Array.flatMap(forest, (node) =>
+    node.kind === 'group' ? [node, ...nodes(node.children)] : [node]
+  )
+
+export const chunks = <File>(
+  forest: ReadonlyArray<Node<File>>
+): Array<Chunk<File>> =>
+  Array.filter(nodes(forest), (node) => node.kind === 'chunk')
+
+export const mapFiles = <A, B>(
+  forest: Array.NonEmptyReadonlyArray<Node<A>>,
+  f: (file: A) => B
+): Array.NonEmptyArray<Node<B>> =>
+  Array.map(forest, (node): Node<B> =>
+    node.kind === 'group'
+      ? { ...node, children: mapFiles(node.children, f) }
+      : { ...node, files: Array.map(node.files, f) }
+  )

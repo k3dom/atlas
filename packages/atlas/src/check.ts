@@ -20,43 +20,20 @@ export class DraftError extends Schema.TaggedError<DraftError>()('DraftError', {
   problems: Schema.NonEmptyArray(Schema.String),
 }) {
   override get message(): string {
-    return [
-      `${this.draft} has ${this.problems.length === 1 ? 'a problem' : `${this.problems.length} problems`}:`,
-      ...Array.map(this.problems, (problem) => `- ${problem}`),
-      `Fix them in the draft and run \`atlas check ${this.draft}\` again.`,
-    ].join('\n')
+    return Array.join(
+      [
+        `${this.draft} has ${this.problems.length === 1 ? 'a problem' : `${this.problems.length} problems`}:`,
+        ...Array.map(this.problems, (problem) => `- ${problem}`),
+        `Fix the draft and run \`atlas check ${this.draft}\` again.`,
+      ],
+      '\n'
+    )
   }
 
   override get [CliError.userMessage](): string {
     return this.message
   }
 }
-
-const DraftJson = Schema.fromJsonString(Artifact.Draft)
-
-export const chunksOf = <File>(
-  nodes: ReadonlyArray<Artifact.Node<File>>
-): Array<Artifact.Chunk<File>> =>
-  Array.flatMap(nodes, (node) =>
-    node.kind === 'group' ? chunksOf(node.children) : [node]
-  )
-
-const nodesOf = <File>(
-  nodes: ReadonlyArray<Artifact.Node<File>>
-): Array<Artifact.Node<File>> =>
-  Array.flatMap(nodes, (node) =>
-    node.kind === 'group' ? [node, ...nodesOf(node.children)] : [node]
-  )
-
-const measure = <A extends { readonly path: string }, B>(
-  nodes: Array.NonEmptyReadonlyArray<Artifact.Node<A>>,
-  file: (file: A) => B
-): Array.NonEmptyArray<Artifact.Node<B>> =>
-  Array.map(nodes, (node): Artifact.Node<B> =>
-    node.kind === 'group'
-      ? { ...node, children: measure(node.children, file) }
-      : { ...node, files: Array.map(node.files, file) }
-  )
 
 const quote = (ids: ReadonlyArray<string>) =>
   pipe(
@@ -65,20 +42,15 @@ const quote = (ids: ReadonlyArray<string>) =>
     Array.join(' and ')
   )
 
-/**
- * Lists what keeps a draft from being a valid map of its scope: ids used more
- * than once, files in no chunk or in several, and files outside the scope.
- */
-export const problems = Effect.fnUntraced(function* (
+const problems = Effect.fnUntraced(function* (
   draft: Artifact.Draft,
-  scope: ReadonlyArray<Scope.File>
+  scope: Scope.Scope
 ) {
   const repository = yield* Repository.Repository
   const fs = yield* FileSystem.FileSystem
-  const inScope = new Set(Array.map(scope, (file) => file.path))
-
+  const inScope = new Set(Array.map(scope.files, (file) => file.path))
   const ids = pipe(
-    nodesOf(draft.chunks),
+    Artifact.nodes(draft.chunks),
     Array.groupBy((node) => node.id),
     Record.toEntries,
     Array.filter(([, nodes]) => nodes.length > 1),
@@ -89,7 +61,7 @@ export const problems = Effect.fnUntraced(function* (
   )
 
   const assigned = pipe(
-    chunksOf(draft.chunks),
+    Artifact.chunks(draft.chunks),
     Array.flatMap((chunk) =>
       Array.map(chunk.files, (file) => ({ path: file.path, chunk: chunk.id }))
     ),
@@ -99,7 +71,11 @@ export const problems = Effect.fnUntraced(function* (
   const files = yield* Effect.forEach(
     Record.toEntries(assigned),
     Effect.fnUntraced(function* ([path, entries]) {
-      const chunks = Array.dedupe(Array.map(entries, (entry) => entry.chunk))
+      const chunks = pipe(
+        entries,
+        Array.map((entry) => entry.chunk),
+        Array.dedupe
+      )
       const found: Array<string> = []
       if (chunks.length > 1) {
         found.push(
@@ -111,9 +87,12 @@ export const problems = Effect.fnUntraced(function* (
         )
       }
       if (!inScope.has(path)) {
+        const exists = yield* fs
+          .exists(repository.absolute(path))
+          .pipe(Effect.orDie)
         found.push(
-          (yield* fs.exists(repository.absolute(path)))
-            ? `${path} is not in the scope of ${Array.join(draft.roots, ', ')}. Remove it, or run \`atlas scope\` to list the files in scope.`
+          exists
+            ? `${path} is not in the scope of ${Array.join(scope.roots, ', ')}. Remove it, or run \`atlas scope\` to list the files in scope.`
             : `${path} does not exist. Use paths relative to the repository root, as \`atlas scope\` prints them.`
         )
       }
@@ -122,7 +101,7 @@ export const problems = Effect.fnUntraced(function* (
   )
 
   const unassigned = pipe(
-    scope,
+    scope.files,
     Array.filter((file) => !Record.has(assigned, file.path)),
     Array.map(
       (file) =>
@@ -140,37 +119,25 @@ const formatPath = (
     path,
     Array.map((segment, index) => {
       const key = Predicate.isObject(segment) ? segment.key : segment
-      return Predicate.isNumber(key)
-        ? `[${key}]`
-        : index === 0
-          ? globalThis.String(key)
-          : `.${globalThis.String(key)}`
+      if (Predicate.isNumber(key)) {
+        return `[${key}]`
+      }
+      return index === 0 ? globalThis.String(key) : `.${globalThis.String(key)}`
     }),
     Array.join('')
   )
 
-/**
- * Validates a draft against its scope and writes it as the final map, with
- * the line counts and commit measured here, to `.atlas/map.json`.
- */
 export const run = Effect.fn('Check.run')(function* (draftPath: string) {
   const repository = yield* Repository.Repository
   const fs = yield* FileSystem.FileSystem
 
-  const draft = yield* fs.readFileString(draftPath).pipe(
-    Effect.flatMap((text) =>
-      Schema.decodeUnknownEffect(DraftJson)(text, {
-        errors: 'all',
-        onExcessProperty: 'error',
-      })
-    ),
-    Effect.catchTags({
-      PlatformError: (error) =>
-        new DraftError({
-          draft: draftPath,
-          problems: [`It can't be read: ${error.message}`],
-        }),
-      SchemaError: (error) =>
+  const text = yield* fs.readFileString(draftPath).pipe(Effect.orDie)
+  const draft = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Artifact.Draft)
+  )(text, { errors: 'all', onExcessProperty: 'error' }).pipe(
+    Effect.catchTag(
+      'SchemaError',
+      (error) =>
         new DraftError({
           draft: draftPath,
           problems: pipe(
@@ -185,12 +152,12 @@ export const run = Effect.fn('Check.run')(function* (draftPath: string) {
                 ? messages
                 : [String.trim(error.message)]
           ),
-        }),
-    })
+        })
+    )
   )
 
   const scope = yield* Scope.resolve(draft.roots)
-  const found = yield* problems(draft, scope.files)
+  const found = yield* problems(draft, scope)
   if (Array.isArrayNonEmpty(found)) {
     return yield* new DraftError({ draft: draftPath, problems: found })
   }
@@ -202,18 +169,22 @@ export const run = Effect.fn('Check.run')(function* (draftPath: string) {
   const artifact: Artifact.Artifact = {
     version: 1,
     commit: yield* repository.head(),
-    roots: draft.roots,
-    chunks: measure(draft.chunks, (file) => ({
+    roots: scope.roots,
+    chunks: Artifact.mapFiles(draft.chunks, (file) => ({
       ...file,
       lines: lines[file.path] ?? 0,
     })),
   }
-  const target = repository.absolute('.atlas/map.json')
-  yield* fs.makeDirectory(repository.absolute('.atlas'), { recursive: true })
-  yield* fs.writeFileString(
-    target,
-    `${JSON.stringify(yield* Schema.encodeEffect(Artifact.Artifact)(artifact), null, 2)}\n`
+  const encoded = yield* Schema.encodeEffect(Artifact.Artifact)(artifact).pipe(
+    Effect.orDie
   )
+  const target = repository.absolute('.atlas/map.json')
+  yield* fs
+    .makeDirectory(repository.absolute('.atlas'), { recursive: true })
+    .pipe(Effect.orDie)
+  yield* fs
+    .writeFileString(target, `${JSON.stringify(encoded, null, 2)}\n`)
+    .pipe(Effect.orDie)
   return {
     artifact,
     path: repository.relative(target),

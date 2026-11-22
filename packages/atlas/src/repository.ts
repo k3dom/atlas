@@ -12,12 +12,47 @@ import {
 import { CliError } from 'effect/cli'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 
+export class NotInstalled extends Schema.TaggedError<NotInstalled>()(
+  'NotInstalled',
+  { cause: Schema.Defect() }
+) {
+  override get message(): string {
+    return 'atlas runs git, which is not on the PATH. Install git and run atlas again.'
+  }
+}
+
+export class NotRepository extends Schema.TaggedError<NotRepository>()(
+  'NotRepository',
+  { cwd: Schema.String }
+) {
+  override get message(): string {
+    return `${this.cwd} is not inside a git repository. Run atlas from the repository you map.`
+  }
+}
+
+export class NoCommits extends Schema.TaggedError<NoCommits>()(
+  'NoCommits',
+  {}
+) {
+  override get message(): string {
+    return 'The repository has no commits yet. Commit the code you map and run atlas again.'
+  }
+}
+
+export class CommandFailed extends Schema.TaggedError<CommandFailed>()(
+  'CommandFailed',
+  { args: Schema.Array(Schema.String), stderr: Schema.String }
+) {
+  override get message(): string {
+    return `\`git ${Array.join(this.args, ' ')}\` failed: ${this.stderr}`
+  }
+}
+
 export class GitError extends Schema.TaggedError<GitError>()('GitError', {
-  args: Schema.Array(Schema.String),
-  detail: Schema.String,
+  reason: Schema.Union([NotInstalled, NotRepository, NoCommits, CommandFailed]),
 }) {
   override get message(): string {
-    return `Couldn't run \`git ${Array.join(this.args, ' ')}\`: ${this.detail}`
+    return this.reason.message
   }
 
   override get [CliError.userMessage](): string {
@@ -49,28 +84,54 @@ export class Repository extends Context.Service<Repository>()(
             { concurrency: 'unbounded' }
           )
           if (exitCode !== 0) {
-            return yield* new GitError({ args, detail: String.trim(stderr) })
+            return yield* new GitError({
+              reason: new CommandFailed({ args, stderr: String.trim(stderr) }),
+            })
           }
           return stdout
         },
         Effect.scoped,
-        (effect, _cwd, ...args) =>
-          Effect.catchTag(
-            effect,
-            'PlatformError',
-            (error) => new GitError({ args, detail: error.message })
-          )
+        Effect.catchTag(
+          'PlatformError',
+          (cause) => new GitError({ reason: new NotInstalled({ cause }) })
+        )
       )
 
-      const root = String.trim(yield* git(cwd, 'rev-parse', '--show-toplevel'))
+      const root = yield* git(cwd, 'rev-parse', '--show-toplevel').pipe(
+        Effect.map(String.trim),
+        Effect.catchReason(
+          'GitError',
+          'CommandFailed',
+          () => new GitError({ reason: new NotRepository({ cwd }) })
+        )
+      )
       const run = (...args: ReadonlyArray<string>) => git(root, ...args)
 
+      const relative = (file: string) => path.relative(root, path.resolve(file))
+
+      const absolute = (file: string) => path.join(root, file)
+
       const tracked = Effect.fn('Repository.tracked')(function* () {
-        return new Set(paths(yield* run('ls-files', '-z')))
+        const deleted = new Set(
+          paths(yield* run('ls-files', '-z', '--deleted'))
+        )
+        return new Set(
+          Array.filter(
+            paths(yield* run('ls-files', '-z')),
+            (file) => !deleted.has(file)
+          )
+        )
       })
 
       const head = Effect.fn('Repository.head')(function* () {
-        return String.trim(yield* run('rev-parse', 'HEAD'))
+        return yield* run('rev-parse', '--verify', 'HEAD').pipe(
+          Effect.map(String.trim),
+          Effect.catchReason(
+            'GitError',
+            'CommandFailed',
+            () => new GitError({ reason: new NoCommits() })
+          )
+        )
       })
 
       const changed = Effect.fn('Repository.changed')(function* (
@@ -81,14 +142,7 @@ export class Repository extends Context.Service<Repository>()(
         )
       })
 
-      return {
-        root,
-        relative: (file: string) => path.relative(root, path.resolve(file)),
-        absolute: (file: string) => path.join(root, file),
-        tracked,
-        head,
-        changed,
-      }
+      return { root, relative, absolute, tracked, head, changed }
     }),
   }
 ) {}

@@ -15,7 +15,7 @@ measured itself.
 Install the CLI with Nix:
 
 ```sh
-nix profile install github:k3dom/atlas
+nix profile install git+ssh://git@github.com/k3dom/atlas
 ```
 
 Add the plugin with the skill in Claude Code:

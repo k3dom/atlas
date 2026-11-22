@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node'
 import { assert, layer } from '@effect/vitest'
 import { deepStrictEqual } from '@effect/vitest/utils'
-import { Effect, FileSystem, Path, Schema } from 'effect'
+import { Array, Effect, FileSystem, Path, Schema, String } from 'effect'
 
 import * as Artifact from '#/artifact.ts'
 import { atlas, workspace } from '#test/fixture.ts'
@@ -14,7 +14,7 @@ const chunk = (id: string, ...paths: ReadonlyArray<string>) => ({
   tier: 2 as const,
   rationale: 'Some branching.',
   essential: 70,
-  files: paths.map((path) => ({ path })),
+  files: Array.map(paths, (path) => ({ path })),
 })
 
 const draft = {
@@ -35,7 +35,12 @@ const draft = {
         chunk('pages', 'packages/app/src/page.ts'),
       ],
     },
-    chunk('helper', 'packages/lib/src/helper.ts', 'packages/lib/src/deep.ts'),
+    chunk(
+      'helper',
+      'packages/lib/src/helper.ts',
+      'packages/lib/src/deep.ts',
+      'packages/lib/src/ids.ts'
+    ),
   ],
 }
 
@@ -62,20 +67,47 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
         )
 
         assert.strictEqual(exitCode, 0)
-        deepStrictEqual(stdout.split('\n'), [
-          '6  packages/app/src/index.ts',
+        deepStrictEqual(String.split(stdout, '\n'), [
+          '7  packages/app/src/index.ts',
           '1  packages/app/src/lazy.ts',
           '1  packages/app/src/local.ts',
           '1  packages/app/src/page.ts',
           '3  packages/lib/src/deep.ts',
-          '3  packages/lib/src/helper.ts',
+          '4  packages/lib/src/helper.ts',
+          '2  packages/lib/src/ids.ts',
           '',
         ])
         assert.include(
           stderr,
-          '6 files with 15 lines in the scope of packages/app.'
+          '7 files with 19 lines in the scope of packages/app.'
         )
+        assert.include(stderr, 'packages/app/src/routes.gen.ts')
         assert.include(stderr, 'missing-package from packages/app/src/index.ts')
+        assert.include(
+          stderr,
+          "imports point to files git doesn't track, such as build output or new files, so they are left out:\n  ../dist/built.js from packages/lib/src/helper.ts"
+        )
+      })
+  )
+
+  it.effect(
+    'reports a tracked file deleted from the working tree as an unresolved import',
+    () =>
+      Effect.gen(function* () {
+        const { root } = yield* workspace
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* Path.Path
+        yield* fs.remove(path.join(root, 'packages/app/src/lazy.ts'))
+
+        const { stdout, stderr, exitCode } = yield* atlas(
+          root,
+          'scope',
+          'packages/app'
+        )
+
+        assert.strictEqual(exitCode, 0)
+        assert.notInclude(stdout, 'lazy.ts')
+        assert.include(stderr, './lazy.ts from packages/app/src/index.ts')
       })
   )
 
@@ -90,25 +122,24 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
         const { exitCode } = yield* atlas(
           root,
           'check',
-          yield* writeDraft(root, draft)
+          yield* writeDraft(root, { ...draft, roots: ['./packages/app/'] })
         )
 
         assert.strictEqual(exitCode, 0)
-        const map = yield* fs
-          .readFileString(path.join(root, '.atlas/map.json'))
-          .pipe(
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.fromJsonString(Artifact.Artifact)
-              )
-            )
-          )
+        const text = yield* fs.readFileString(
+          path.join(root, '.atlas/map.json')
+        )
+        const map = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Artifact.Artifact)
+        )(text)
         assert.strictEqual(map.commit, commit)
+        deepStrictEqual(map.roots, ['packages/app'])
         deepStrictEqual(map.chunks[1], {
           ...chunk('helper'),
           files: [
-            { path: 'packages/lib/src/helper.ts', lines: 3 },
+            { path: 'packages/lib/src/helper.ts', lines: 4 },
             { path: 'packages/lib/src/deep.ts', lines: 3 },
+            { path: 'packages/lib/src/ids.ts', lines: 2 },
           ],
         })
       })
@@ -130,14 +161,18 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
       )
 
       assert.strictEqual(exitCode, 1)
-      assert.include(stderr, 'has 2 problems')
+      assert.include(stderr, 'has 3 problems')
       assert.include(
         stderr,
         'packages/lib/src/deep.ts (3 lines) is in no chunk.'
       )
       assert.include(
         stderr,
-        'packages/lib/src/helper.ts (3 lines) is in no chunk.'
+        'packages/lib/src/helper.ts (4 lines) is in no chunk.'
+      )
+      assert.include(
+        stderr,
+        'packages/lib/src/ids.ts (2 lines) is in no chunk.'
       )
       assert.isFalse(yield* fs.exists(path.join(root, '.atlas')))
     })
@@ -215,6 +250,21 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
       assert.include(stderr, 'chunks[0].tier: Expected 1 | 2 | 3 | 4')
       assert.include(stderr, 'chunks[0].lines: Expected no excess property')
       assert.include(stderr, 'chunks[0].files[0]: Missing key')
+    })
+  )
+
+  it.effect('asks to run atlas inside a git repository', () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+
+      const { stderr, exitCode } = yield* atlas(directory, 'scope', '.')
+
+      assert.strictEqual(exitCode, 1)
+      assert.include(
+        stderr,
+        'is not inside a git repository. Run atlas from the repository you map.'
+      )
     })
   )
 })

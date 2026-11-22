@@ -1,4 +1,14 @@
-import { Array, Console, Effect, JsonSchema, Schema } from 'effect'
+import {
+  Array,
+  Console,
+  Effect,
+  JsonSchema,
+  Number,
+  Option,
+  pipe,
+  Schema,
+  String,
+} from 'effect'
 import { Argument, Command, Flag } from 'effect/cli'
 
 import * as Artifact from '#/artifact.ts'
@@ -35,11 +45,22 @@ const schema = Command.make(
   }
 ).pipe(Command.withDescription('Print the JSON Schema of a draft map'))
 
+const list = (heading: string, items: ReadonlyArray<string>) =>
+  Array.isReadonlyArrayNonEmpty(items)
+    ? Console.error(
+        Array.join([heading, ...Array.map(items, (item) => `  ${item}`)], '\n')
+      )
+    : Effect.void
+
 const scope = Command.make(
   'scope',
   {
-    roots: Argument.String('root').pipe(
+    roots: Argument.Directory('root', { mustExist: true }).pipe(
       Argument.atLeast(1),
+      Argument.filterMap(
+        Option.liftPredicate(Array.isReadonlyArrayNonEmpty),
+        () => 'Pass at least one root.'
+      ),
       Argument.withDescription(
         'Directory whose files are in scope, such as a package'
       )
@@ -47,33 +68,32 @@ const scope = Command.make(
   },
   Effect.fnUntraced(function* ({ roots }) {
     const repository = yield* Repository.Repository
-    const relative = Array.map(
-      roots,
-      (root) => repository.relative(root) || '.'
+    const result = yield* Scope.resolve(Array.map(roots, repository.relative))
+    const width = pipe(
+      result.files,
+      Array.map((file) => globalThis.String(file.lines).length),
+      Array.reduce(0, (a, b) => Number.max(a, b))
     )
-    const { files, unresolved } = yield* Scope.resolve(relative)
-    const width = globalThis.String(
-      Math.max(...Array.map(files, (file) => file.lines))
-    ).length
-    for (const file of files) {
+    for (const file of result.files) {
       yield* Console.log(
-        `${globalThis.String(file.lines).padStart(width)}  ${file.path}`
+        `${String.padStart(width)(globalThis.String(file.lines))}  ${file.path}`
       )
     }
     yield* Console.error(
-      `${files.length} files with ${Array.reduce(files, 0, (sum, file) => sum + file.lines)} lines in the scope of ${Array.join(relative, ', ')}.`
+      `${result.files.length} files with ${Number.sumAll(Array.map(result.files, (file) => file.lines))} lines in the scope of ${Array.join(result.roots, ', ')}.`
     )
-    if (Array.isArrayNonEmpty(unresolved)) {
-      yield* Console.error(
-        [
-          `${unresolved.length} imports could not be resolved, so files they point to may be missing:`,
-          ...Array.map(
-            unresolved,
-            ({ from, specifier }) => `  ${specifier} from ${from}`
-          ),
-        ].join('\n')
-      )
-    }
+    yield* list(
+      `Left out ${result.generated.length} generated files:`,
+      result.generated
+    )
+    yield* list(
+      `${result.unresolved.length} imports could not be resolved, so files they point to may be missing:`,
+      Array.map(result.unresolved, (i) => `${i.specifier} from ${i.from}`)
+    )
+    yield* list(
+      `${result.untracked.length} imports point to files git doesn't track, such as build output or new files, so they are left out:`,
+      Array.map(result.untracked, (i) => `${i.specifier} from ${i.from}`)
+    )
   })
 ).pipe(
   Command.withDescription(
@@ -91,17 +111,29 @@ const check = Command.make(
   },
   Effect.fnUntraced(function* ({ draft }) {
     const { artifact, path, changed } = yield* Check.run(draft)
-    const chunks = Check.chunksOf(artifact.chunks)
+    const nodes = Artifact.nodes(artifact.chunks)
+    const chunks = Artifact.chunks(artifact.chunks)
     const files = Array.flatMap(chunks, (chunk) => chunk.files)
+    const tiers = pipe(
+      [1, 2, 3, 4] as const,
+      Array.map(
+        (tier) =>
+          `${Array.filter(chunks, (chunk) => chunk.tier === tier).length} in tier ${tier}`
+      ),
+      Array.join(', ')
+    )
     yield* Console.error(
-      `Wrote ${path} with ${chunks.length} chunks, ${files.length} files and ${Array.reduce(files, 0, (sum, file) => sum + file.lines)} lines at ${artifact.commit}.`
+      `Wrote ${path} at ${artifact.commit}: ${nodes.length - chunks.length} groups, ${chunks.length} chunks (${tiers}), ${files.length} files and ${Number.sumAll(Array.map(files, (file) => file.lines))} lines.`
     )
     if (Array.isArrayNonEmpty(changed)) {
       yield* Console.error(
-        [
-          `${changed.length} files in scope differ from ${artifact.commit}, so their line counts describe the working tree. Commit them and run check again for a map of a commit:`,
-          ...Array.map(changed, (file) => `  ${file}`),
-        ].join('\n')
+        Array.join(
+          [
+            `${changed.length} files in scope differ from ${artifact.commit}, so their line counts describe the working tree. Commit them and run check again for a map of a commit:`,
+            ...Array.map(changed, (file) => `  ${file}`),
+          ],
+          '\n'
+        )
       )
     }
   })
