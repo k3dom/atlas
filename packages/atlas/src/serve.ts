@@ -94,8 +94,6 @@ export class ViewerError extends Schema.TaggedError<ViewerError>()(
   }
 }
 
-const ArtifactJson = Schema.fromJsonString(Artifact.Artifact)
-
 export const find = Effect.fn('Serve.find')(
   function* () {
     const repository = yield* Repository.Repository
@@ -115,30 +113,6 @@ export const find = Effect.fn('Serve.find')(
     ({ cwd }) => new ViewerError({ reason: new OutsideRepository({ cwd }) })
   )
 )
-
-export const layer = (options: {
-  readonly artifact: string
-  readonly viewer: string
-}) =>
-  Layer.mergeAll(
-    HttpRouter.add(
-      'GET',
-      '/',
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
-        const path = yield* Path.Path
-        const [html, map] = yield* Effect.all([
-          fs.readFileString(path.join(options.viewer, 'index.html')),
-          fs.readFileString(options.artifact),
-        ])
-        const script = `<script id="map" type="application/json">${String.replaceAll('<', '\\u003c')(map)}</script>`
-        return HttpServerResponse.html(
-          html.replace('</head>', () => `${script}</head>`)
-        )
-      }).pipe(Effect.orDie)
-    ),
-    HttpStaticServer.layer({ root: options.viewer })
-  )
 
 const browse = Effect.fnUntraced(
   function* (url: string) {
@@ -170,11 +144,11 @@ export const run = Effect.fn('Serve.run')(function* (options: {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
 
-  yield* fs.readFileString(options.artifact).pipe(
-    Effect.orDie,
-    Effect.flatMap((text) =>
-      Schema.decodeUnknownEffect(ArtifactJson)(text, { errors: 'all' })
-    ),
+  const text = yield* fs.readFileString(options.artifact).pipe(Effect.orDie)
+  yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Artifact.Artifact))(
+    text,
+    { errors: 'all' }
+  ).pipe(
     Effect.catchTag(
       'SchemaError',
       (error) =>
@@ -205,10 +179,26 @@ export const run = Effect.fn('Serve.run')(function* (options: {
 
   return yield* Layer.effectDiscard(announce).pipe(
     Layer.provideMerge(
-      HttpRouter.serve(layer({ artifact: options.artifact, viewer }), {
-        disableLogger: true,
-        disableListenLog: true,
-      })
+      HttpRouter.serve(
+        Layer.mergeAll(
+          HttpRouter.add(
+            'GET',
+            '/',
+            Effect.gen(function* () {
+              const [html, map] = yield* Effect.all([
+                fs.readFileString(path.join(viewer, 'index.html')),
+                fs.readFileString(options.artifact),
+              ])
+              const script = `<script id="map" type="application/json">${String.replaceAll('<', '\\u003c')(map)}</script>`
+              return HttpServerResponse.html(
+                html.replace('</head>', () => `${script}</head>`)
+              )
+            }).pipe(Effect.orDie)
+          ),
+          HttpStaticServer.layer({ root: viewer })
+        ),
+        { disableLogger: true, disableListenLog: true }
+      )
     ),
     Layer.provide(
       NodeHttpServer.layer(createServer, {
