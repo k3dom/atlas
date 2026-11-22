@@ -40,6 +40,8 @@ atlas imports --draft draft.json
                                 # coupling between the chunks of a draft
 atlas schema                    # JSON Schema of a draft
 atlas check draft.json          # validate a draft and write .atlas/map.json
+atlas serve                     # show .atlas/map.json in the viewer
+atlas serve map.json            # show another map in the viewer
 ```
 
 ## Development

@@ -1,5 +1,5 @@
 import * as Artifact from 'atlas/artifact'
-import { Array, Result, Schema } from 'effect'
+import { Array, Option, pipe, Result, Schema } from 'effect'
 import { useMemo, useState, type ChangeEvent, type DragEvent } from 'react'
 
 import { Details, Legend } from '#/details.tsx'
@@ -72,11 +72,24 @@ const Viewer = ({ artifact }: { readonly artifact: Artifact.Artifact }) => {
 }
 
 export const App = () => {
-  const [loaded, setLoaded] = useState<{
-    readonly name: string
-    readonly result: ReturnType<typeof decode>
-    readonly count: number
-  }>()
+  const [loaded, setLoaded] = useState<
+    | {
+        readonly name: string
+        readonly result: ReturnType<typeof decode>
+        readonly count: number
+      }
+    | undefined
+  >(() =>
+    pipe(
+      Option.fromNullishOr(document.getElementById('map')?.textContent),
+      Option.map((text) => ({
+        name: 'the map that atlas serve loaded',
+        result: decode(text),
+        count: 0,
+      })),
+      Option.getOrUndefined
+    )
+  )
 
   const open = async (file: File | undefined) => {
     if (file !== undefined) {

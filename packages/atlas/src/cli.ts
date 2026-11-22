@@ -16,6 +16,7 @@ import * as Check from '#/check.ts'
 import * as Imports from '#/imports.ts'
 import * as Repository from '#/repository.ts'
 import * as Scope from '#/scope.ts'
+import * as Serve from '#/serve.ts'
 
 const schema = Command.make(
   'schema',
@@ -339,7 +340,40 @@ const imports = Command.make(
   Command.provide(Repository.layer)
 )
 
+const serve = Command.make(
+  'serve',
+  {
+    artifact: Argument.File('artifact', { mustExist: true }).pipe(
+      Argument.optional,
+      Argument.withDescription(
+        'Map to show, by default the .atlas/map.json of the current repository'
+      )
+    ),
+    port: Flag.Int('port').pipe(
+      Flag.withDefault(0),
+      Flag.withDescription('Port to serve on, by default any free port')
+    ),
+    open: Flag.Boolean('open').pipe(
+      Flag.withDefault(true),
+      Flag.withDescription(
+        'Open the viewer in the browser. Pass --no-open to only print its URL'
+      )
+    ),
+  },
+  Effect.fnUntraced(function* ({ artifact, port, open }) {
+    return yield* Serve.run({
+      artifact: Option.isSome(artifact) ? artifact.value : yield* Serve.find(),
+      port,
+      open,
+    })
+  })
+).pipe(
+  Command.withDescription(
+    'Show a map in the viewer, served on localhost until you stop it with Ctrl+C'
+  )
+)
+
 export const cli = Command.make('atlas').pipe(
   Command.withDescription('Map the complexity of a codebase'),
-  Command.withSubcommands([schema, scope, imports, check])
+  Command.withSubcommands([schema, scope, imports, check, serve])
 )
