@@ -348,6 +348,28 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
     })
   )
 
+  it.effect('asks to fetch the commit of the map when the clone lacks it', () =>
+    Effect.gen(function* () {
+      const { root } = yield* workspace
+      yield* atlas(root, 'check', yield* writeDraft(root, draft))
+      const missing = 'f'.repeat(40)
+      yield* edit(root, '.atlas/map.json', (content) =>
+        String.replace(
+          /"commit": "[0-9a-f]{40}"/u,
+          `"commit": "${missing}"`
+        )(content)
+      )
+
+      const { stderr, exitCode } = yield* atlas(root, 'changes')
+
+      assert.strictEqual(exitCode, 1)
+      assert.include(
+        stderr,
+        `The map in .atlas/map.json describes the commit ${missing}, which this clone doesn't have, so atlas can't tell what changed since. Fetch it with \`git fetch origin ${missing}\``
+      )
+    })
+  )
+
   it.effect('asks for a map before it lists changes', () =>
     Effect.gen(function* () {
       const { root } = yield* workspace
@@ -400,8 +422,8 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
         path.join(root, 'packages/app/src/extra.ts'),
         'export const extra = 1\n'
       )
-      const second = yield* commitAll(root)
-      const first = [
+      const renamedAt = yield* commitAll(root)
+      const renameAndAdd = [
         {
           kind: 'rename',
           from: 'pages',
@@ -425,11 +447,11 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
             helper,
             chunk('extra', 'packages/app/src/extra.ts'),
           ],
-          events: first,
+          events: renameAndAdd,
         })
       )
-      const third = yield* commitAll(root)
-      const merge = [
+      const mergedAt = yield* commitAll(root)
+      const mergeEvents = [
         {
           kind: 'merge',
           from: ['views', 'extra'],
@@ -453,7 +475,7 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
             }),
             helper,
           ],
-          events: merge,
+          events: mergeEvents,
         })
       )
 
@@ -463,8 +485,8 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
         `Recorded 2 events since the map at ${String.slice(0, 12)(commit)}: 1 add, 1 rename.`
       )
       deepStrictEqual((yield* readMap(root)).history, [
-        { commit: second, events: first },
-        { commit: third, events: merge },
+        { commit: renamedAt, events: renameAndAdd },
+        { commit: mergedAt, events: mergeEvents },
       ])
     })
   )
@@ -520,6 +542,111 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
           before
         )
       })
+  )
+
+  it.effect(
+    'records the events of an update only once the files in scope are committed',
+    () =>
+      Effect.gen(function* () {
+        const { root } = yield* workspace
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* Path.Path
+        yield* atlas(root, 'check', yield* writeDraft(root, draft))
+        const before = yield* fs.readFileString(
+          path.join(root, '.atlas/map.json')
+        )
+        yield* edit(
+          root,
+          'packages/app/src/local.ts',
+          (content) => `${content}export const other = 2\n`
+        )
+        const revise = {
+          kind: 'revise',
+          chunk: 'entry',
+          reason: 'More logic.',
+        } as const
+        const update = yield* writeDraft(root, {
+          ...draft,
+          chunks: [app({ ...entry, tier: 3 }, pages), helper],
+          events: [revise],
+        })
+
+        const uncommitted = yield* atlas(root, 'check', update)
+        assert.strictEqual(uncommitted.exitCode, 1)
+        assert.include(
+          uncommitted.stderr,
+          'A file in scope differs from HEAD. The history of the map records the events of an update at the commit with the changes they describe, so commit it and run check again:\n  packages/app/src/local.ts'
+        )
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, '.atlas/map.json')),
+          before
+        )
+        const committed = yield* commitAll(root)
+        const { exitCode } = yield* atlas(root, 'check', update)
+
+        assert.strictEqual(exitCode, 0)
+        deepStrictEqual((yield* readMap(root)).history, [
+          { commit: committed, events: [revise] },
+        ])
+      })
+  )
+
+  it.effect('checks chunks whose ids are names of object properties', () =>
+    Effect.gen(function* () {
+      const { root } = yield* workspace
+      yield* atlas(root, 'check', yield* writeDraft(root, draft))
+
+      const { exitCode } = yield* atlas(
+        root,
+        'check',
+        yield* writeDraft(root, {
+          ...draft,
+          chunks: [app(entry, { ...pages, id: 'constructor' }), helper],
+          events: [
+            {
+              kind: 'rename',
+              from: 'pages',
+              to: 'constructor',
+              reason: 'Pages build things now.',
+            },
+          ],
+        })
+      )
+
+      assert.strictEqual(exitCode, 0)
+      deepStrictEqual(
+        Array.map(
+          Artifact.chunks((yield* readMap(root)).chunks),
+          (node) => node.id
+        ),
+        ['entry', 'constructor', 'helper']
+      )
+    })
+  )
+
+  it.effect('rejects a rename that keeps the id', () =>
+    Effect.gen(function* () {
+      const { root } = yield* workspace
+      yield* atlas(root, 'check', yield* writeDraft(root, draft))
+
+      const { stderr, exitCode } = yield* atlas(
+        root,
+        'check',
+        yield* writeDraft(root, {
+          ...draft,
+          events: [
+            { kind: 'rename', from: 'pages', to: 'pages', reason: 'Same.' },
+          ],
+        })
+      )
+
+      assert.strictEqual(exitCode, 1)
+      assert.include(stderr, 'has a problem')
+      assert.include(
+        stderr,
+        'events[0], which renames "pages" to "pages", but keeps the id.'
+      )
+    })
   )
 
   it.effect('rejects events in the draft of a new map', () =>

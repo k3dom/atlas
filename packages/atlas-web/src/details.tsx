@@ -1,5 +1,5 @@
 import * as Artifact from 'atlas/artifact'
-import { Array, Number, pipe, String } from 'effect'
+import { Array, Number, pipe } from 'effect'
 import type { ReactNode } from 'react'
 
 import * as Tier from '#/tier.ts'
@@ -67,24 +67,17 @@ export const history = (artifact: Artifact.Artifact, id: string) => {
   return found
 }
 
-const describe = (event: Artifact.Event, id: string) => {
-  switch (event.kind) {
-    case 'add':
-      return event.chunk === id ? 'Added' : `Added as ${event.chunk}`
-    case 'remove':
-      return `Removed ${event.chunk}`
-    case 'revise':
-      return event.chunk === id ? 'Revised' : `Revised as ${event.chunk}`
-    case 'rename':
-      return event.to === id
-        ? `Renamed from ${event.from}`
-        : `Renamed from ${event.from} to ${event.to}`
-    case 'split':
-      return `Split from ${event.from} into ${Array.join(event.into, ', ')}`
-    case 'merge':
-      return `Merged ${Array.join(event.from, ', ')} into ${event.into}`
-  }
-}
+const describe = (event: Artifact.Event, id: string) =>
+  Artifact.Event.match(event, {
+    add: ({ chunk }) => (chunk === id ? 'Added' : `Added as ${chunk}`),
+    remove: ({ chunk }) => `Removed ${chunk}`,
+    revise: ({ chunk }) => (chunk === id ? 'Revised' : `Revised as ${chunk}`),
+    rename: ({ from, to }) =>
+      to === id ? `Renamed from ${from}` : `Renamed from ${from} to ${to}`,
+    split: ({ from, into }) =>
+      `Split from ${from} into ${Array.join(into, ', ')}`,
+    merge: ({ from, into }) => `Merged ${Array.join(from, ', ')} into ${into}`,
+  })
 
 export const Details = ({
   artifact,
@@ -104,10 +97,7 @@ export const Details = ({
           {count(chunks.length, 'chunk')} with{' '}
           {Number.sumAll(Array.map(artifact.chunks, Artifact.lines))} lines at
           commit{' '}
-          <code className="font-mono">
-            {String.slice(0, 12)(artifact.commit)}
-          </code>
-          .
+          <code className="font-mono">{Artifact.short(artifact.commit)}</code>.
         </p>
         <p className="text-sm text-stone-600">
           Select a chunk to see its details. Select a group by its header to
@@ -168,7 +158,7 @@ export const Details = ({
                     {describe(event, node.id)}
                   </span>
                   <code className="font-mono text-xs text-stone-500">
-                    {String.slice(0, 12)(commit)}
+                    {Artifact.short(commit)}
                   </code>
                 </p>
                 <p className="text-stone-700">{event.reason}</p>

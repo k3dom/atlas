@@ -62,15 +62,10 @@ export class GitError extends Schema.TaggedError<GitError>()('GitError', {
   }
 }
 
-export interface Diff {
-  readonly path: string
-  readonly from?: string | undefined
-  readonly added: number | undefined
-  readonly deleted: number | undefined
+export interface Stat {
+  readonly added: number
+  readonly deleted: number
 }
-
-const count = (value: string | undefined) =>
-  Option.getOrUndefined(Number.parse(value ?? ''))
 
 const paths = (output: string) =>
   pipe(output, String.split('\0'), Array.filter(String.isNonEmpty))
@@ -154,30 +149,46 @@ export class Repository extends Context.Service<Repository>()(
         )
       })
 
+      const has = Effect.fn('Repository.has')(function* (commit: string) {
+        return yield* run('cat-file', '-e', `${commit}^{commit}`).pipe(
+          Effect.as(true),
+          Effect.catchReason('GitError', 'CommandFailed', () =>
+            Effect.succeed(false)
+          )
+        )
+      })
+
       const diff = Effect.fn('Repository.diff')(function* (commit: string) {
         const fields = paths(
           yield* run('diff', '--numstat', '-z', '-M', commit, '--')
         )
-        const files: Array<Diff> = []
+        const files: Array<{
+          readonly path: string
+          readonly from?: string | undefined
+          readonly stat: Option.Option<Stat>
+        }> = []
         for (let index = 0; index < fields.length; index++) {
           const parts = String.split(fields[index] ?? '', '\t')
-          const counts = { added: count(parts[0]), deleted: count(parts[1]) }
+          const stat = Option.all({
+            added: Number.parse(parts[0] ?? ''),
+            deleted: Number.parse(parts[1] ?? ''),
+          })
           const file = parts[2] ?? ''
           if (String.isEmpty(file)) {
             files.push({
               from: fields[index + 1],
               path: fields[index + 2] ?? '',
-              ...counts,
+              stat,
             })
             index += 2
           } else {
-            files.push({ path: file, ...counts })
+            files.push({ path: file, stat })
           }
         }
         return files
       })
 
-      return { root, relative, absolute, tracked, head, changed, diff }
+      return { root, relative, absolute, tracked, head, changed, has, diff }
     }),
   }
 ) {}

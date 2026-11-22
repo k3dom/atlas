@@ -7,6 +7,7 @@ import {
   Option,
   pipe,
   Record,
+  Result,
   Schema,
   String,
   Struct,
@@ -132,20 +133,18 @@ const check = Command.make(
       `Wrote ${Store.path} at ${artifact.commit}: ${nodes.length - chunks.length} groups, ${chunks.length} chunks (${tiers}), ${files.length} files and ${Number.sumAll(Array.map(files, (file) => file.lines))} lines.`
     )
     if (Option.isSome(previous)) {
+      const at = `the map at ${Artifact.short(previous.value.commit)}`
       yield* Console.error(
         Array.isReadonlyArrayNonEmpty(events)
-          ? `Recorded ${events.length === 1 ? 'an event' : `${events.length} events`} since the map at ${String.slice(0, 12)(previous.value.commit)}: ${pipe(
-              ['add', 'remove', 'rename', 'split', 'merge', 'revise'] as const,
+          ? `Recorded ${events.length === 1 ? 'an event' : `${events.length} events`} since ${at}: ${pipe(
+              Artifact.Event.discriminants,
               Array.flatMap((kind) => {
-                const n = Array.filter(
-                  events,
-                  (event) => event.kind === kind
-                ).length
+                const n = Array.countBy(events, (event) => event.kind === kind)
                 return n > 0 ? [`${n} ${kind}`] : []
               }),
               Array.join(', ')
             )}.`
-          : `The chunks are the same as in the map at ${String.slice(0, 12)(previous.value.commit)}.`
+          : `The chunks are the same as in ${at}.`
       )
     }
     if (Array.isArrayNonEmpty(changed)) {
@@ -361,19 +360,18 @@ const imports = Command.make(
   Command.provide(Repository.layer)
 )
 
-const counts = (added: number | undefined, deleted: number | undefined) =>
-  added === undefined || deleted === undefined
-    ? 'binary'
-    : `+${added} -${deleted}`
-
 const line = (change: Changes.Change) => {
+  const stat = Option.match({
+    onNone: () => 'binary',
+    onSome: ({ added, deleted }: Repository.Stat) => `+${added} -${deleted}`,
+  })
   switch (change.kind) {
     case 'added':
       return `  added    ${change.path}  ${change.lines} ${change.lines === 1 ? 'line' : 'lines'}`
     case 'changed':
-      return `  changed  ${change.path}  ${counts(change.added, change.deleted)}`
+      return `  changed  ${change.path}  ${stat(change.stat)}`
     case 'renamed':
-      return `  renamed  ${change.path}  from ${change.from}  ${counts(change.added, change.deleted)}`
+      return `  renamed  ${change.path}  from ${change.from}  ${stat(change.stat)}`
     case 'removed':
       return `  removed  ${change.path}  ${change.deleted ? 'deleted' : 'no longer in scope'}`
   }
@@ -384,20 +382,20 @@ const changes = Command.make(
   {},
   Effect.fnUntraced(function* () {
     const { artifact, changes: found } = yield* Changes.run()
-    const commit = String.slice(0, 12)(artifact.commit)
-    const byChunk = Array.groupBy(found, (change) =>
-      change.kind === 'added' ? '' : change.chunk
+    const commit = Artifact.short(artifact.commit)
+    const [assigned, added] = Array.partition(found, (change) =>
+      change.kind === 'added' ? Result.fail(change) : Result.succeed(change)
     )
-    const touched = Array.filter(Artifact.chunks(artifact.chunks), (chunk) =>
-      Record.has(byChunk, chunk.id)
-    )
+    const byChunk = Array.groupBy(assigned, (change) => change.chunk)
     const blocks = [
-      ...Array.map(touched, (chunk) => [
-        chunk.id,
-        ...Array.map(byChunk[chunk.id] ?? [], line),
-      ]),
-      ...(Record.has(byChunk, '')
-        ? [['In no chunk', ...Array.map(byChunk[''] ?? [], line)]]
+      ...Array.flatMap(Artifact.chunks(artifact.chunks), (chunk) => {
+        const ofChunk = byChunk[chunk.id]
+        return ofChunk === undefined
+          ? []
+          : [[chunk.id, ...Array.map(ofChunk, line)]]
+      }),
+      ...(Array.isArrayNonEmpty(added)
+        ? [['In no chunk', ...Array.map(added, line)]]
         : []),
     ]
     if (Array.isArrayNonEmpty(blocks)) {
@@ -408,14 +406,14 @@ const changes = Command.make(
     const kinds = pipe(
       ['added', 'changed', 'renamed', 'removed'] as const,
       Array.flatMap((kind) => {
-        const n = Array.filter(found, (change) => change.kind === kind).length
+        const n = Array.countBy(found, (change) => change.kind === kind)
         return n > 0 ? [`${n} ${kind}`] : []
       }),
       Array.join(', ')
     )
     yield* Console.error(
       Array.isArrayNonEmpty(found)
-        ? `${found.length === 1 ? 'A file' : `${found.length} files`} in the scope of ${Array.join(artifact.roots, ', ')} differ from the map at ${commit}: ${kinds}, in ${touched.length === 1 ? 'a chunk' : `${touched.length} chunks`}. Show the changes of a file with \`git diff ${commit} -- <file>\`.`
+        ? `${found.length === 1 ? 'A file' : `${found.length} files`} in the scope of ${Array.join(artifact.roots, ', ')} differ from the map at ${commit}: ${kinds}, in ${Record.size(byChunk) === 1 ? 'a chunk' : `${Record.size(byChunk)} chunks`}. Show the changes of a file with \`git diff ${commit} -- <file>\`.`
         : `No file in the scope of ${Array.join(artifact.roots, ', ')} differs from the map at ${commit}.`
     )
   })

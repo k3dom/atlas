@@ -130,7 +130,9 @@ framework workarounds, indirection and duplication.
 `atlas changes` lists the files in scope that were added, changed, renamed or
 removed since the commit of the map, under the chunk each is in and with new
 files under "In no chunk". The scope comes from the roots of the map. If no file
-changed, report that the map is current and stop.
+changed, report that the map is current and stop. `check` records the events of
+an update at the current commit, so it refuses them while files in scope have
+uncommitted changes. Ask the user to commit those first.
 
 Start the draft from the map with `atlas draft > .atlas/draft.json` and change
 only what the changes call for:

@@ -142,53 +142,39 @@ export const Event = Schema.Union([
         'A chunk that keeps its id and changes otherwise, such as in its files or its tier',
     }
   ),
-]).annotate({ identifier: 'Event' })
+])
+  .annotate({ identifier: 'Event' })
+  .pipe(Schema.toTaggedUnion('kind'))
 
 export type Event = typeof Event.Type
 
-export const sources = (event: Event): ReadonlyArray<string> => {
-  switch (event.kind) {
-    case 'add':
-      return []
-    case 'remove':
-    case 'revise':
-      return [event.chunk]
-    case 'rename':
-    case 'split':
-      return [event.from]
-    case 'merge':
-      return event.from
-  }
-}
+export const sources: (event: Event) => ReadonlyArray<string> = Event.match({
+  add: () => [],
+  remove: (event) => [event.chunk],
+  revise: (event) => [event.chunk],
+  rename: (event) => [event.from],
+  split: (event) => [event.from],
+  merge: (event) => event.from,
+})
 
-export const targets = (event: Event): ReadonlyArray<string> => {
-  switch (event.kind) {
-    case 'remove':
-      return []
-    case 'add':
-    case 'revise':
-      return [event.chunk]
-    case 'rename':
-      return [event.to]
-    case 'split':
-      return event.into
-    case 'merge':
-      return [event.into]
-  }
-}
-
-const none = <S extends Schema.Top>(schema: S) =>
-  schema.pipe(Schema.withDecodingDefaultKey(Effect.succeed([])))
+export const targets: (event: Event) => ReadonlyArray<string> = Event.match({
+  add: (event) => [event.chunk],
+  remove: () => [],
+  revise: (event) => [event.chunk],
+  rename: (event) => [event.to],
+  split: (event) => event.into,
+  merge: (event) => [event.into],
+})
 
 export const Draft = Schema.Struct({
   roots,
   chunks: Schema.NonEmptyArray(tree(Schema.Struct({ path: Path, mixed }))),
-  events: none(
-    Schema.Array(Event).annotate({
+  events: Schema.Array(Event)
+    .annotate({
       description:
         'How the chunks differ from those of the map in .atlas/map.json, so that every change to the map has a reason. A chunk takes part in at most one event. A new map has none',
     })
-  ),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 }).annotate({
   title: 'Draft of an atlas map',
   description:
@@ -214,19 +200,19 @@ export const Artifact = Schema.Struct({
   }),
   roots,
   chunks: Schema.NonEmptyArray(tree(MeasuredFile)),
-  history: none(
-    Schema.Array(
-      Schema.Struct({
-        commit: Commit.annotate({
-          description: 'SHA of the commit the update brought the map to',
-        }),
-        events: Schema.NonEmptyArray(Event),
-      })
-    ).annotate({
+  history: Schema.Array(
+    Schema.Struct({
+      commit: Commit.annotate({
+        description: 'SHA of the commit the update brought the map to',
+      }),
+      events: Schema.NonEmptyArray(Event),
+    })
+  )
+    .annotate({
       description:
         'The updates of the map that changed its chunks, oldest first, with their events',
     })
-  ),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 }).annotate({
   title: 'Atlas map',
   description:
@@ -234,6 +220,8 @@ export const Artifact = Schema.Struct({
 })
 
 export type Artifact = typeof Artifact.Type
+
+export const short = (commit: string) => String.slice(0, 12)(commit)
 
 export const nodes = <File>(
   forest: ReadonlyArray<Node<File>>

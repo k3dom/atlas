@@ -6,21 +6,44 @@ import * as Repository from '#/repository.ts'
 
 export const path = '.atlas/map.json'
 
-export class MapError extends Schema.TaggedError<MapError>()('MapError', {
-  reason: Schema.Literals(['missing', 'invalid']),
-  problems: Schema.Array(Schema.String),
+export class MapMissing extends Schema.TaggedError<MapMissing>()(
+  'MapMissing',
+  {}
+) {
+  override get message(): string {
+    return `There is no map at ${path}. Build one with the map skill first.`
+  }
+}
+
+export class MapInvalid extends Schema.TaggedError<MapInvalid>()('MapInvalid', {
+  problems: Schema.NonEmptyArray(Schema.String),
 }) {
   override get message(): string {
-    return this.reason === 'missing'
-      ? `There is no map at ${path}. Build one with the map skill first.`
-      : Array.join(
-          [
-            `${path} isn't a valid atlas map:`,
-            ...Array.map(this.problems, (problem) => `- ${problem}`),
-            `Restore it with \`git checkout -- ${path}\`, or delete it to build a new map.`,
-          ],
-          '\n'
-        )
+    return Array.join(
+      [
+        `${path} isn't a valid atlas map:`,
+        ...Array.map(this.problems, (problem) => `- ${problem}`),
+        `Restore it with \`git checkout -- ${path}\`, or delete it to build a new map.`,
+      ],
+      '\n'
+    )
+  }
+}
+
+export class CommitMissing extends Schema.TaggedError<CommitMissing>()(
+  'CommitMissing',
+  { commit: Schema.String }
+) {
+  override get message(): string {
+    return `The map in ${path} describes the commit ${this.commit}, which this clone doesn't have, so atlas can't tell what changed since. Fetch it with \`git fetch origin ${this.commit}\`, or delete the map to build a new one.`
+  }
+}
+
+export class MapError extends Schema.TaggedError<MapError>()('MapError', {
+  reason: Schema.Union([MapMissing, MapInvalid, CommitMissing]),
+}) {
+  override get message(): string {
+    return this.reason.message
   }
 
   override get [CliError.userMessage](): string {
@@ -46,8 +69,7 @@ export const find = Effect.fn('Store.find')(function* () {
       'SchemaError',
       (error) =>
         new MapError({
-          reason: 'invalid',
-          problems: Artifact.problems(error.issue),
+          reason: new MapInvalid({ problems: Artifact.problems(error.issue) }),
         })
     )
   )
@@ -56,7 +78,7 @@ export const find = Effect.fn('Store.find')(function* () {
 export const get = Effect.fn('Store.get')(function* () {
   const found = yield* find()
   if (Option.isNone(found)) {
-    return yield* new MapError({ reason: 'missing', problems: [] })
+    return yield* new MapError({ reason: new MapMissing() })
   }
   return found.value
 })
