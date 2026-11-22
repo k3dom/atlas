@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "format": "oxfmt AGENTS.md README.md oxfmt.config.ts package.json tsconfig.json turbo.json",
-    "format:check": "oxfmt --check AGENTS.md README.md oxfmt.config.ts package.json tsconfig.json turbo.json",
+    "format": "oxfmt .claude-plugin/marketplace.json AGENTS.md README.md oxfmt.config.ts package.json tsconfig.json turbo.json",
+    "format:check": "oxfmt --check .claude-plugin/marketplace.json AGENTS.md README.md oxfmt.config.ts package.json tsconfig.json turbo.json",
     "check": "pnpm run format:check && turbo run check"
   },
   "devDependencies": {

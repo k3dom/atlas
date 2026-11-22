@@ -1,0 +1,14 @@
+{
+  "name": "k3dom",
+  "owner": {
+    "name": "k3dom"
+  },
+  "description": "Tools for mapping the complexity of codebases",
+  "plugins": [
+    {
+      "name": "atlas",
+      "source": "./packages/atlas",
+      "description": "Map the complexity of a codebase as a treemap of semantic chunks"
+    }
+  ]
+}

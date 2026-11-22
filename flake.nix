@@ -12,6 +12,45 @@
           }
       );
   in {
+    packages = eachSupportedSystem ({pkgs}: {
+      default = pkgs.stdenv.mkDerivation (finalAttrs: {
+        pname = "atlas";
+        version = (builtins.fromJSON (builtins.readFile ./packages/atlas/package.json)).version;
+        src = ./.;
+
+        pnpmWorkspaces = ["atlas"];
+        pnpmInstallFlags = ["--prod"];
+        pnpmDeps = pkgs.fetchPnpmDeps {
+          inherit (finalAttrs) pname version src pnpmWorkspaces pnpmInstallFlags;
+          pnpm = pkgs.pnpm_12;
+          fetcherVersion = 5;
+          hash = "sha256-qKNh8BN3Tkwv9GKEYmV2W5UGIcTcOvQb50ihwoetcVw=";
+        };
+
+        nativeBuildInputs = with pkgs; [
+          nodejs_26
+          pnpm_12
+          pnpmConfigHook
+          makeWrapper
+        ];
+
+        dontBuild = true;
+
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out/lib/atlas/packages
+          cp -r node_modules $out/lib/atlas/
+          cp -r packages/atlas $out/lib/atlas/packages/
+          makeWrapper ${pkgs.nodejs_26}/bin/node $out/bin/atlas \
+            --add-flags $out/lib/atlas/packages/atlas/src/index.ts \
+            --prefix PATH : ${pkgs.git}/bin
+          runHook postInstall
+        '';
+
+        meta.mainProgram = "atlas";
+      });
+    });
+
     devShells = eachSupportedSystem ({pkgs}: {
       default = pkgs.mkShell {
         packages = with pkgs; [
