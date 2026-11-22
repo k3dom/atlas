@@ -18,14 +18,14 @@ import * as Scope from '#/scope.ts'
 export class DraftError extends Schema.TaggedError<DraftError>()('DraftError', {
   draft: Schema.String,
   problems: Schema.NonEmptyArray(Schema.String),
-  command: Schema.String,
+  command: Schema.Literals(['check', 'imports']),
 }) {
   override get message(): string {
     return Array.join(
       [
         `${this.draft} has ${this.problems.length === 1 ? 'a problem' : `${this.problems.length} problems`}:`,
         ...Array.map(this.problems, (problem) => `- ${problem}`),
-        `Fix the draft and run \`${this.command}\` again.`,
+        `Fix the draft and run \`atlas ${this.command === 'check' ? 'check' : 'imports --draft'} ${this.draft}\` again.`,
       ],
       '\n'
     )
@@ -130,7 +130,7 @@ const formatPath = (
 
 export const read = Effect.fn('Check.read')(function* (
   draftPath: string,
-  command: string
+  command: DraftError['command']
 ) {
   const fs = yield* FileSystem.FileSystem
   const text = yield* fs.readFileString(draftPath).pipe(Effect.orDie)
@@ -163,13 +163,16 @@ export const read = Effect.fn('Check.read')(function* (
 export const run = Effect.fn('Check.run')(function* (draftPath: string) {
   const repository = yield* Repository.Repository
   const fs = yield* FileSystem.FileSystem
-  const command = `atlas check ${draftPath}`
-  const draft = yield* read(draftPath, command)
+  const draft = yield* read(draftPath, 'check')
 
   const scope = yield* Scope.resolve(draft.roots)
   const found = yield* problems(draft, scope)
   if (Array.isArrayNonEmpty(found)) {
-    return yield* new DraftError({ draft: draftPath, problems: found, command })
+    return yield* new DraftError({
+      draft: draftPath,
+      problems: found,
+      command: 'check',
+    })
   }
 
   const lines = Record.fromIterableWith(scope.files, (file) => [

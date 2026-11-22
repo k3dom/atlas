@@ -81,15 +81,16 @@ export const coupling = (scope: Scope.Scope, draft: Artifact.Draft) => {
   return {
     between: pipe(
       across,
-      Array.groupBy((link) =>
-        Array.join(Array.sort([link.from, link.to], Order.String), ' ')
-      ),
+      Array.map((link) => ({
+        one: Order.min(Order.String)(link.from, link.to),
+        other: Order.max(Order.String)(link.from, link.to),
+        from: link.from,
+      })),
+      Array.groupBy((link) => `${link.one} ${link.other}`),
       Record.values,
       Array.map((group) => {
-        const { from, to } = group[0]
-        const one = Order.min(Order.String)(from, to)
-        const other = Order.max(Order.String)(from, to)
-        const forward = Array.filter(group, (link) => link.from === one).length
+        const { one, other } = group[0]
+        const forward = Array.countBy(group, (link) => link.from === one)
         const backward = group.length - forward
         return forward >= backward
           ? { from: one, to: other, imports: forward, back: backward }
@@ -108,7 +109,9 @@ export const coupling = (scope: Scope.Scope, draft: Artifact.Draft) => {
       const files = pipe(
         chunk.files,
         Array.map((file) => file.path),
-        Array.filter((file) => inScope.has(file))
+        Array.filter(
+          (file) => inScope.has(file) && chunks.get(file) === chunk.id
+        )
       )
       const own = pipe(
         inside,
@@ -131,8 +134,8 @@ export const coupling = (scope: Scope.Scope, draft: Artifact.Draft) => {
         chunk: chunk.id,
         files: files.length,
         inside: own.length,
-        out: Array.filter(across, (link) => link.from === chunk.id).length,
-        in: Array.filter(across, (link) => link.to === chunk.id).length,
+        out: Array.countBy(across, (link) => link.from === chunk.id),
+        in: Array.countBy(across, (link) => link.to === chunk.id),
         parts: pipe(
           Graph.weaklyConnectedComponents(graph),
           Array.map((part) =>
@@ -150,7 +153,19 @@ export const coupling = (scope: Scope.Scope, draft: Artifact.Draft) => {
         ),
       }
     }),
-    unassigned: Array.filter(scope.files, (file) => !chunks.has(file.path))
-      .length,
+    unassigned: Array.countBy(scope.files, (file) => !chunks.has(file.path)),
+    repeated: pipe(
+      Artifact.chunks(draft.chunks),
+      Array.flatMap((chunk) =>
+        pipe(
+          chunk.files,
+          Array.map((file) => file.path),
+          Array.dedupe
+        )
+      ),
+      Array.groupBy((file) => file),
+      Record.values,
+      Array.countBy((paths) => paths.length > 1)
+    ),
   }
 }

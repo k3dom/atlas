@@ -65,15 +65,13 @@ Give each node an id in kebab case that names its concept, such as
 Use the imports to cluster: files that import each other a lot usually belong
 together, and a file imported from many chunks is often a shared layer of its
 own. Once the draft is written, `atlas imports --draft .atlas/draft.json` shows
-the coupling between its chunks, counted in imports between their files, and for
-each chunk its imports inside, out and in and the parts its files split into
-with no imports between them. `atlas imports --draft .atlas/draft.json <file>`
-labels a file's imports and dependents with their chunks. Reconsider chunks that
-import each other in both directions or many times compared with the imports
-inside them, since they may be one concept, and chunks that split into several
-parts, since they may be several. Keep a chunk as it is when its files belong
-together for a reason imports don't show, such as endpoints of one feature that
-a router wires up.
+the coupling between its chunks and the parts each chunk falls into, and with
+files after it, labels their imports and dependents with their chunks.
+Reconsider chunks that import each other in both directions or many times
+compared with the imports inside them, since they may be one concept, and chunks
+that split into several parts, since they may be several. Keep a chunk as it is
+when its files belong together for a reason imports don't show, such as
+endpoints of one feature that a router wires up.
 
 ## Rate
 

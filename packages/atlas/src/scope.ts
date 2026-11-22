@@ -20,12 +20,12 @@ export interface File {
   readonly lines: number
 }
 
-export interface Import {
+export interface Specifier {
   readonly from: string
   readonly specifier: string
 }
 
-export interface Edge {
+export interface Import {
   readonly from: string
   readonly to: string
 }
@@ -33,10 +33,10 @@ export interface Edge {
 export interface Scope {
   readonly roots: Array.NonEmptyReadonlyArray<string>
   readonly files: ReadonlyArray<File>
-  readonly imports: ReadonlyArray<Edge>
+  readonly imports: ReadonlyArray<Import>
   readonly generated: ReadonlyArray<string>
-  readonly unresolved: ReadonlyArray<Import>
-  readonly untracked: ReadonlyArray<Import>
+  readonly unresolved: ReadonlyArray<Specifier>
+  readonly untracked: ReadonlyArray<Specifier>
 }
 
 export class RootError extends Schema.TaggedError<RootError>()('RootError', {
@@ -190,9 +190,9 @@ export const resolve = Effect.fn('Scope.resolve')(function* (
   const seen = new Set<string>(Array.flatten(starts))
   const files: Array<File> = []
   const generated: Array<string> = []
-  const unresolved: Array<Import> = []
-  const untracked: Array<Import> = []
-  const edges: Array<Edge> = []
+  const unresolved: Array<Specifier> = []
+  const untracked: Array<Specifier> = []
+  const edges: Array<Import> = []
   let frontier = Array.fromIterable(seen)
   while (Array.isArrayNonEmpty(frontier)) {
     const visited = yield* Effect.forEach(frontier, visit, {

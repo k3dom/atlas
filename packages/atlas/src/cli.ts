@@ -261,10 +261,7 @@ const imports = Command.make(
       return yield* new ImportsUsage({ reason: 'both' })
     }
 
-    const draft = yield* Check.read(
-      draftPath.value,
-      `atlas imports --draft ${draftPath.value}`
-    )
+    const draft = yield* Check.read(draftPath.value, 'imports')
     const resolved = yield* Scope.resolve(draft.roots)
     if (Array.isReadonlyArrayNonEmpty(paths)) {
       const chunks = Imports.chunkOf(draft)
@@ -275,7 +272,10 @@ const imports = Command.make(
       )
     }
 
-    const { between, chunks, unassigned } = Imports.coupling(resolved, draft)
+    const { between, chunks, unassigned, repeated } = Imports.coupling(
+      resolved,
+      draft
+    )
     yield* Console.log(
       Array.join(
         [
@@ -321,9 +321,14 @@ const imports = Command.make(
         '\n'
       )
     )
+    if (repeated > 0) {
+      yield* Console.error(
+        `${repeated === 1 ? 'A file is' : `${repeated} files are`} in more than one chunk and counts only toward the last chunk that lists it. Run \`atlas check ${draftPath.value}\` to list them.`
+      )
+    }
     if (unassigned > 0) {
       yield* Console.error(
-        `${unassigned} files in scope are in no chunk, so their imports are left out. Run \`atlas check ${draftPath.value}\` to list them.`
+        `${unassigned === 1 ? 'A file' : `${unassigned} files`} in scope ${unassigned === 1 ? 'is' : 'are'} in no chunk, so ${unassigned === 1 ? 'its' : 'their'} imports are left out. Run \`atlas check ${draftPath.value}\` to list them.`
       )
     }
   })

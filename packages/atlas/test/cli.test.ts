@@ -377,6 +377,39 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
       })
   )
 
+  it.effect(
+    'counts a file in several chunks toward the last and notes files in no chunk',
+    () =>
+      Effect.gen(function* () {
+        const { root } = yield* workspace
+
+        const { stdout, stderr, exitCode } = yield* atlas(
+          root,
+          'imports',
+          '--draft',
+          yield* writeDraft(root, {
+            ...draft,
+            chunks: [
+              draft.chunks[0],
+              chunk('extra', 'packages/app/src/local.ts'),
+            ],
+          })
+        )
+
+        assert.strictEqual(exitCode, 0)
+        assert.include(stdout, '\n      2       1    2   0      1  entry\n')
+        assert.include(stdout, '\n      1       0    0   2      1  extra\n')
+        assert.include(
+          stderr,
+          'A file is in more than one chunk and counts only toward the last chunk that lists it.'
+        )
+        assert.include(
+          stderr,
+          '3 files in scope are in no chunk, so their imports are left out.'
+        )
+      })
+  )
+
   it.effect('asks to run atlas inside a git repository', () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
