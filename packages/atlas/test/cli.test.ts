@@ -71,7 +71,7 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
           '7  packages/app/src/index.ts',
           '1  packages/app/src/lazy.ts',
           '1  packages/app/src/local.ts',
-          '1  packages/app/src/page.ts',
+          '2  packages/app/src/page.ts',
           '3  packages/lib/src/deep.ts',
           '4  packages/lib/src/helper.ts',
           '2  packages/lib/src/ids.ts',
@@ -79,7 +79,7 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
         ])
         assert.include(
           stderr,
-          '7 files with 19 lines in the scope of packages/app.'
+          '7 files with 20 lines in the scope of packages/app.'
         )
         assert.include(stderr, 'packages/app/src/routes.gen.ts')
         assert.include(stderr, 'missing-package from packages/app/src/index.ts')
@@ -251,6 +251,130 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
       assert.include(stderr, 'chunks[0].lines: Expected no excess property')
       assert.include(stderr, 'chunks[0].files[0]: Missing key')
     })
+  )
+
+  it.effect(
+    'lists the imports and dependents of files within the scope, through workspace packages and generated files',
+    () =>
+      Effect.gen(function* () {
+        const { root } = yield* workspace
+
+        const { stdout, exitCode } = yield* atlas(
+          root,
+          'imports',
+          '--root',
+          'packages/app',
+          'packages/lib/src/helper.ts',
+          'packages/app/src/index.ts'
+        )
+
+        assert.strictEqual(exitCode, 0)
+        deepStrictEqual(String.split(stdout, '\n'), [
+          'packages/lib/src/helper.ts',
+          '  imports      packages/lib/src/deep.ts',
+          '  imported by  packages/app/src/index.ts',
+          '',
+          'packages/app/src/index.ts',
+          '  imports      packages/app/src/lazy.ts',
+          '  imports      packages/app/src/local.ts',
+          '  imports      packages/app/src/page.ts',
+          '  imports      packages/lib/src/helper.ts',
+          '  imports      packages/lib/src/ids.ts',
+          '',
+        ])
+      })
+  )
+
+  it.effect.each([
+    {
+      file: 'packages/lib/src/unused.ts',
+      message:
+        'packages/lib/src/unused.ts is not in the scope of packages/app.',
+    },
+    {
+      file: 'packages/app/src/routes.gen.ts',
+      message:
+        'packages/app/src/routes.gen.ts is generated, so the scope of packages/app leaves it and its imports out.',
+    },
+  ])('names a file whose imports it cannot show: $file', ({ file, message }) =>
+    Effect.gen(function* () {
+      const { root } = yield* workspace
+
+      const { stderr, exitCode } = yield* atlas(
+        root,
+        'imports',
+        '--root',
+        'packages/app',
+        file
+      )
+
+      assert.strictEqual(exitCode, 1)
+      assert.include(stderr, message)
+    })
+  )
+
+  it.effect(
+    'labels the imports and dependents of a file with their chunks',
+    () =>
+      Effect.gen(function* () {
+        const { root } = yield* workspace
+
+        const { stdout, exitCode } = yield* atlas(
+          root,
+          'imports',
+          '--draft',
+          yield* writeDraft(root, { ...draft, chunks: [draft.chunks[0]] }),
+          'packages/app/src/index.ts'
+        )
+
+        assert.strictEqual(exitCode, 0)
+        deepStrictEqual(String.split(stdout, '\n'), [
+          'packages/app/src/index.ts  in entry',
+          '  imports      packages/app/src/lazy.ts  in entry',
+          '  imports      packages/app/src/local.ts  in entry',
+          '  imports      packages/app/src/page.ts  in pages',
+          '  imports      packages/lib/src/helper.ts  in no chunk',
+          '  imports      packages/lib/src/ids.ts  in no chunk',
+          '',
+        ])
+      })
+  )
+
+  it.effect(
+    'reports the coupling between the chunks of a draft and the parts of each chunk',
+    () =>
+      Effect.gen(function* () {
+        const { root } = yield* workspace
+
+        const { stdout, exitCode } = yield* atlas(
+          root,
+          'imports',
+          '--draft',
+          yield* writeDraft(root, draft)
+        )
+
+        assert.strictEqual(exitCode, 0)
+        deepStrictEqual(String.split(stdout, '\n'), [
+          'Imports between chunks, counted as imports between their files, with the ones the other way after a plus:',
+          '  imports  chunks',
+          '        2  entry -> helper',
+          '    1 + 1  entry <-> pages',
+          '',
+          'Chunks with their files in scope, their imports inside, out to and in from other chunks, and the parts their files split into with no imports between parts:',
+          '  files  inside  out  in  parts  chunk',
+          '      3       2    3   1      1  entry',
+          '      1       0    1   1      1  pages',
+          '      3       1    0   2      2  helper',
+          '',
+          'helper part 1:',
+          '  packages/lib/src/deep.ts',
+          '  packages/lib/src/helper.ts',
+          '',
+          'helper part 2:',
+          '  packages/lib/src/ids.ts',
+          '',
+        ])
+      })
   )
 
   it.effect('asks to run atlas inside a git repository', () =>

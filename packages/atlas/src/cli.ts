@@ -9,10 +9,11 @@ import {
   Schema,
   String,
 } from 'effect'
-import { Argument, Command, Flag } from 'effect/cli'
+import { Argument, CliError, Command, Flag } from 'effect/cli'
 
 import * as Artifact from '#/artifact.ts'
 import * as Check from '#/check.ts'
+import * as Imports from '#/imports.ts'
 import * as Repository from '#/repository.ts'
 import * as Scope from '#/scope.ts'
 
@@ -144,7 +145,196 @@ const check = Command.make(
   Command.provide(Repository.layer)
 )
 
+class ImportsUsage extends Schema.TaggedError<ImportsUsage>()('ImportsUsage', {
+  reason: Schema.Literals(['no-scope', 'both', 'no-files']),
+}) {
+  override get message(): string {
+    switch (this.reason) {
+      case 'no-scope':
+        return 'Pass --root with the files whose imports to show, or --draft to take the scope and chunks from a draft.'
+      case 'both':
+        return 'Pass either --root or --draft, not both, since a draft names its own roots.'
+      case 'no-files':
+        return 'Pass the files whose imports to show. To show the coupling between the chunks of a draft instead, pass --draft in place of --root.'
+    }
+  }
+
+  override get [CliError.userMessage](): string {
+    return this.message
+  }
+}
+
+const table = (
+  header: ReadonlyArray<string>,
+  rows: ReadonlyArray<ReadonlyArray<string | number>>
+) => {
+  const cells = [header, ...Array.map(rows, Array.map(globalThis.String))]
+  const widths = Array.map(header, (_, column) =>
+    pipe(
+      cells,
+      Array.map((row) => row[column]?.length ?? 0),
+      Array.reduce(0, (a, b) => Number.max(a, b))
+    )
+  )
+  return Array.map(cells, (row) =>
+    pipe(
+      row,
+      Array.map((cell, column) =>
+        column === header.length - 1
+          ? cell
+          : String.padStart(widths[column] ?? 0)(cell)
+      ),
+      Array.join('  '),
+      (line) => `  ${line}`
+    )
+  )
+}
+
+const neighbors = Effect.fnUntraced(function* (
+  resolved: Scope.Scope,
+  files: ReadonlyArray<string>,
+  label: (file: string) => string
+) {
+  const found = yield* Effect.forEach(files, (file) =>
+    Imports.neighbors(resolved, file)
+  )
+  yield* Console.log(
+    pipe(
+      found,
+      Array.map(({ file, imports, dependents }) =>
+        Array.join(
+          [
+            label(file),
+            ...Array.map(imports, (to) => `  imports      ${label(to)}`),
+            ...Array.map(dependents, (from) => `  imported by  ${label(from)}`),
+            ...(Array.isReadonlyArrayNonEmpty(imports) ||
+            Array.isReadonlyArrayNonEmpty(dependents)
+              ? []
+              : ['  imports no file in scope and no file in scope imports it']),
+          ],
+          '\n'
+        )
+      ),
+      Array.join('\n\n')
+    )
+  )
+})
+
+const imports = Command.make(
+  'imports',
+  {
+    files: Argument.File('file', { mustExist: true }).pipe(
+      Argument.variadic(),
+      Argument.withDescription(
+        'File in scope whose imports and dependents to show'
+      )
+    ),
+    roots: Flag.Directory('root', { mustExist: true }).pipe(
+      Flag.atLeast(0),
+      Flag.withDescription(
+        'Directory whose files are in scope, such as a package, as for `atlas scope`. Repeat it for several roots'
+      )
+    ),
+    draftPath: Flag.File('draft', { mustExist: true }).pipe(
+      Flag.optional,
+      Flag.withDescription(
+        'Draft map whose roots make up the scope and whose chunks label the files. Without files, show the coupling between its chunks'
+      )
+    ),
+  },
+  Effect.fnUntraced(function* ({ files, roots, draftPath }) {
+    const repository = yield* Repository.Repository
+    const paths = Array.map(files, repository.relative)
+    if (Option.isNone(draftPath)) {
+      if (!Array.isReadonlyArrayNonEmpty(roots)) {
+        return yield* new ImportsUsage({ reason: 'no-scope' })
+      }
+      if (!Array.isReadonlyArrayNonEmpty(paths)) {
+        return yield* new ImportsUsage({ reason: 'no-files' })
+      }
+      const resolved = yield* Scope.resolve(
+        Array.map(roots, repository.relative)
+      )
+      return yield* neighbors(resolved, paths, (file) => file)
+    }
+    if (Array.isReadonlyArrayNonEmpty(roots)) {
+      return yield* new ImportsUsage({ reason: 'both' })
+    }
+
+    const draft = yield* Check.read(
+      draftPath.value,
+      `atlas imports --draft ${draftPath.value}`
+    )
+    const resolved = yield* Scope.resolve(draft.roots)
+    if (Array.isReadonlyArrayNonEmpty(paths)) {
+      const chunks = Imports.chunkOf(draft)
+      return yield* neighbors(
+        resolved,
+        paths,
+        (file) => `${file}  in ${chunks.get(file) ?? 'no chunk'}`
+      )
+    }
+
+    const { between, chunks, unassigned } = Imports.coupling(resolved, draft)
+    yield* Console.log(
+      Array.join(
+        [
+          'Imports between chunks, counted as imports between their files, with the ones the other way after a plus:',
+          ...(Array.isReadonlyArrayNonEmpty(between)
+            ? table(
+                ['imports', 'chunks'],
+                Array.map(between, (pair) =>
+                  pair.back > 0
+                    ? [
+                        `${pair.imports} + ${pair.back}`,
+                        `${pair.from} <-> ${pair.to}`,
+                      ]
+                    : [pair.imports, `${pair.from} -> ${pair.to}`]
+                )
+              )
+            : ['  none']),
+          '',
+          'Chunks with their files in scope, their imports inside, out to and in from other chunks, and the parts their files split into with no imports between parts:',
+          ...table(
+            ['files', 'inside', 'out', 'in', 'parts', 'chunk'],
+            Array.map(chunks, (chunk) => [
+              chunk.files,
+              chunk.inside,
+              chunk.out,
+              chunk.in,
+              chunk.parts.length,
+              chunk.chunk,
+            ])
+          ),
+          ...pipe(
+            chunks,
+            Array.filter((chunk) => chunk.parts.length > 1),
+            Array.flatMap((chunk) =>
+              Array.flatMap(chunk.parts, (part, index) => [
+                '',
+                `${chunk.chunk} part ${index + 1}:`,
+                ...Array.map(part, (file) => `  ${file}`),
+              ])
+            )
+          ),
+        ],
+        '\n'
+      )
+    )
+    if (unassigned > 0) {
+      yield* Console.error(
+        `${unassigned} files in scope are in no chunk, so their imports are left out. Run \`atlas check ${draftPath.value}\` to list them.`
+      )
+    }
+  })
+).pipe(
+  Command.withDescription(
+    'Show the imports and dependents of files within the scope. With --draft and no files, show the coupling between the chunks of the draft instead'
+  ),
+  Command.provide(Repository.layer)
+)
+
 export const cli = Command.make('atlas').pipe(
   Command.withDescription('Map the complexity of a codebase'),
-  Command.withSubcommands([schema, scope, check])
+  Command.withSubcommands([schema, scope, imports, check])
 )

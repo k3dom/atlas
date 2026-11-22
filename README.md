@@ -6,9 +6,9 @@ treemap.
 The `map` skill has Claude Code split the code in a scope, such as a package and
 the workspace code it imports, into semantic chunks and rate each from tier 1
 (straightforward) to tier 4 (the hardest in the codebase). The `atlas` CLI lists
-the files in scope and checks the agent's draft, then writes the map to
-`.atlas/map.json` in the mapped repository with line counts and the commit it
-measured itself.
+the files in scope, shows how they import each other and checks the agent's
+draft, then writes the map to `.atlas/map.json` in the mapped repository with
+line counts and the commit it measured itself.
 
 ## Install
 
@@ -34,6 +34,10 @@ The CLI also works on its own:
 
 ```sh
 atlas scope packages/club-cli   # files in scope with their line counts
+atlas imports --root packages/club-cli packages/club-cli/src/main.ts
+                                # imports and dependents of a file in scope
+atlas imports --draft draft.json
+                                # coupling between the chunks of a draft
 atlas schema                    # JSON Schema of a draft
 atlas check draft.json          # validate a draft and write .atlas/map.json
 ```
