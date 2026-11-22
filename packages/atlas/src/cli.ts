@@ -6,17 +6,21 @@ import {
   Number,
   Option,
   pipe,
+  Record,
   Schema,
   String,
+  Struct,
 } from 'effect'
 import { Argument, CliError, Command, Flag } from 'effect/cli'
 
 import * as Artifact from '#/artifact.ts'
+import * as Changes from '#/changes.ts'
 import * as Check from '#/check.ts'
 import * as Imports from '#/imports.ts'
 import * as Repository from '#/repository.ts'
 import * as Scope from '#/scope.ts'
 import * as Serve from '#/serve.ts'
+import * as Store from '#/store.ts'
 
 const schema = Command.make(
   'schema',
@@ -112,7 +116,7 @@ const check = Command.make(
     ),
   },
   Effect.fnUntraced(function* ({ draft }) {
-    const { artifact, path, changed } = yield* Check.run(draft)
+    const { artifact, previous, events, changed } = yield* Check.run(draft)
     const nodes = Artifact.nodes(artifact.chunks)
     const chunks = Artifact.chunks(artifact.chunks)
     const files = Array.flatMap(chunks, (chunk) => chunk.files)
@@ -125,8 +129,25 @@ const check = Command.make(
       Array.join(', ')
     )
     yield* Console.error(
-      `Wrote ${path} at ${artifact.commit}: ${nodes.length - chunks.length} groups, ${chunks.length} chunks (${tiers}), ${files.length} files and ${Number.sumAll(Array.map(files, (file) => file.lines))} lines.`
+      `Wrote ${Store.path} at ${artifact.commit}: ${nodes.length - chunks.length} groups, ${chunks.length} chunks (${tiers}), ${files.length} files and ${Number.sumAll(Array.map(files, (file) => file.lines))} lines.`
     )
+    if (Option.isSome(previous)) {
+      yield* Console.error(
+        Array.isReadonlyArrayNonEmpty(events)
+          ? `Recorded ${events.length === 1 ? 'an event' : `${events.length} events`} since the map at ${String.slice(0, 12)(previous.value.commit)}: ${pipe(
+              ['add', 'remove', 'rename', 'split', 'merge', 'revise'] as const,
+              Array.flatMap((kind) => {
+                const n = Array.filter(
+                  events,
+                  (event) => event.kind === kind
+                ).length
+                return n > 0 ? [`${n} ${kind}`] : []
+              }),
+              Array.join(', ')
+            )}.`
+          : `The chunks are the same as in the map at ${String.slice(0, 12)(previous.value.commit)}.`
+      )
+    }
     if (Array.isArrayNonEmpty(changed)) {
       yield* Console.error(
         Array.join(
@@ -141,7 +162,7 @@ const check = Command.make(
   })
 ).pipe(
   Command.withDescription(
-    'Validate a draft map against its scope and write it to .atlas/map.json with measured line counts and the commit'
+    'Validate a draft map against its scope and the events against the map in .atlas/map.json, and write the draft there with measured line counts, the commit and the events added to its history'
   ),
   Command.provide(Repository.layer)
 )
@@ -265,7 +286,7 @@ const imports = Command.make(
     const draft = yield* Check.read(draftPath.value, 'imports')
     const resolved = yield* Scope.resolve(draft.roots)
     if (Array.isReadonlyArrayNonEmpty(paths)) {
-      const chunks = Imports.chunkOf(draft)
+      const chunks = Imports.chunkOf(draft.chunks)
       return yield* neighbors(
         resolved,
         paths,
@@ -340,6 +361,90 @@ const imports = Command.make(
   Command.provide(Repository.layer)
 )
 
+const counts = (added: number | undefined, deleted: number | undefined) =>
+  added === undefined || deleted === undefined
+    ? 'binary'
+    : `+${added} -${deleted}`
+
+const line = (change: Changes.Change) => {
+  switch (change.kind) {
+    case 'added':
+      return `  added    ${change.path}  ${change.lines} ${change.lines === 1 ? 'line' : 'lines'}`
+    case 'changed':
+      return `  changed  ${change.path}  ${counts(change.added, change.deleted)}`
+    case 'renamed':
+      return `  renamed  ${change.path}  from ${change.from}  ${counts(change.added, change.deleted)}`
+    case 'removed':
+      return `  removed  ${change.path}  ${change.deleted ? 'deleted' : 'no longer in scope'}`
+  }
+}
+
+const changes = Command.make(
+  'changes',
+  {},
+  Effect.fnUntraced(function* () {
+    const { artifact, changes: found } = yield* Changes.run()
+    const commit = String.slice(0, 12)(artifact.commit)
+    const byChunk = Array.groupBy(found, (change) =>
+      change.kind === 'added' ? '' : change.chunk
+    )
+    const touched = Array.filter(Artifact.chunks(artifact.chunks), (chunk) =>
+      Record.has(byChunk, chunk.id)
+    )
+    const blocks = [
+      ...Array.map(touched, (chunk) => [
+        chunk.id,
+        ...Array.map(byChunk[chunk.id] ?? [], line),
+      ]),
+      ...(Record.has(byChunk, '')
+        ? [['In no chunk', ...Array.map(byChunk[''] ?? [], line)]]
+        : []),
+    ]
+    if (Array.isArrayNonEmpty(blocks)) {
+      yield* Console.log(
+        Array.join(Array.map(blocks, Array.join('\n')), '\n\n')
+      )
+    }
+    const kinds = pipe(
+      ['added', 'changed', 'renamed', 'removed'] as const,
+      Array.flatMap((kind) => {
+        const n = Array.filter(found, (change) => change.kind === kind).length
+        return n > 0 ? [`${n} ${kind}`] : []
+      }),
+      Array.join(', ')
+    )
+    yield* Console.error(
+      Array.isArrayNonEmpty(found)
+        ? `${found.length === 1 ? 'A file' : `${found.length} files`} in the scope of ${Array.join(artifact.roots, ', ')} differ from the map at ${commit}: ${kinds}, in ${touched.length === 1 ? 'a chunk' : `${touched.length} chunks`}. Show the changes of a file with \`git diff ${commit} -- <file>\`.`
+        : `No file in the scope of ${Array.join(artifact.roots, ', ')} differs from the map at ${commit}.`
+    )
+  })
+).pipe(
+  Command.withDescription(
+    'List the files in scope that were added, changed, renamed or removed since the commit of the map in .atlas/map.json, by the chunk they are in'
+  ),
+  Command.provide(Repository.layer)
+)
+
+const draft = Command.make(
+  'draft',
+  {},
+  Effect.fnUntraced(function* () {
+    const artifact = yield* Store.get()
+    const encoded = yield* Schema.encodeEffect(Artifact.Draft)({
+      roots: artifact.roots,
+      chunks: Artifact.mapFiles(artifact.chunks, Struct.omit(['lines'])),
+      events: [],
+    }).pipe(Effect.orDie)
+    yield* Console.log(JSON.stringify(encoded, null, 2))
+  })
+).pipe(
+  Command.withDescription(
+    'Print the map in .atlas/map.json as a draft without events, to start an update from'
+  ),
+  Command.provide(Repository.layer)
+)
+
 const serve = Command.make(
   'serve',
   {
@@ -375,5 +480,13 @@ const serve = Command.make(
 
 export const cli = Command.make('atlas').pipe(
   Command.withDescription('Map the complexity of a codebase'),
-  Command.withSubcommands([schema, scope, imports, check, serve])
+  Command.withSubcommands([
+    schema,
+    scope,
+    imports,
+    changes,
+    draft,
+    check,
+    serve,
+  ])
 )

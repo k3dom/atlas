@@ -71,13 +71,20 @@ const files = {
   'packages/lib/dist/built.js': lines('export const built = 1'),
 }
 
+export const git = Effect.fnUntraced(function* (
+  cwd: string,
+  ...args: ReadonlyArray<string>
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+  return String.trim(
+    yield* spawner.string(ChildProcess.make('git', args, { cwd }))
+  )
+})
+
 export const workspace = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
   const root = yield* fs.makeTempDirectoryScoped()
-  const git = (...args: ReadonlyArray<string>) =>
-    spawner.string(ChildProcess.make('git', args, { cwd: root }))
 
   yield* Effect.forEach(
     Record.toEntries(files),
@@ -96,12 +103,12 @@ export const workspace = Effect.gen(function* () {
     '../../../lib',
     path.join(root, 'packages/app/node_modules/@ws/lib')
   )
-  yield* git('init', '--quiet')
-  yield* git('config', 'user.email', 'test@example.com')
-  yield* git('config', 'user.name', 'Test')
-  yield* git('add', '.')
-  yield* git('commit', '--quiet', '-m', 'init')
-  return { root, commit: String.trim(yield* git('rev-parse', 'HEAD')) }
+  yield* git(root, 'init', '--quiet')
+  yield* git(root, 'config', 'user.email', 'test@example.com')
+  yield* git(root, 'config', 'user.name', 'Test')
+  yield* git(root, 'add', '.')
+  yield* git(root, 'commit', '--quiet', '-m', 'init')
+  return { root, commit: yield* git(root, 'rev-parse', 'HEAD') }
 })
 
 const spawn = Effect.fnUntraced(function* (

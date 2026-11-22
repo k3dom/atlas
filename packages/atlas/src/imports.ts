@@ -58,15 +58,17 @@ export const neighbors = Effect.fnUntraced(function* (
   }
 })
 
-export const chunkOf = (draft: Artifact.Draft) =>
+export const chunkOf = (
+  forest: ReadonlyArray<Artifact.Node<{ readonly path: string }>>
+) =>
   new Map(
-    Array.flatMap(Artifact.chunks(draft.chunks), (chunk) =>
+    Array.flatMap(Artifact.chunks(forest), (chunk) =>
       Array.map(chunk.files, (file) => [file.path, chunk.id] as const)
     )
   )
 
 export const coupling = (scope: Scope.Scope, draft: Artifact.Draft) => {
-  const chunks = chunkOf(draft)
+  const chunks = chunkOf(draft.chunks)
   const links = Array.flatMapNullishOr(scope.imports, (edge) => {
     const from = chunks.get(edge.from)
     const to = chunks.get(edge.to)

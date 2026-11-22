@@ -1,5 +1,5 @@
 import * as Artifact from 'atlas/artifact'
-import { Array, Number, String } from 'effect'
+import { Array, Number, pipe, String } from 'effect'
 import type { ReactNode } from 'react'
 
 import * as Tier from '#/tier.ts'
@@ -38,6 +38,53 @@ export const Legend = () => (
 )
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+
+export const history = (artifact: Artifact.Artifact, id: string) => {
+  const found: Array<{
+    readonly commit: string
+    readonly event: Artifact.Event
+  }> = []
+  let ids: ReadonlySet<string> = new Set([id])
+  for (const entry of pipe(
+    artifact.history,
+    Array.flatMap((update) =>
+      Array.map(update.events, (event) => ({ commit: update.commit, event }))
+    ),
+    Array.reverse
+  )) {
+    const targets = Artifact.targets(entry.event)
+    if (Array.some(targets, (target) => ids.has(target))) {
+      found.push(entry)
+      ids = new Set([
+        ...Array.filter(
+          Array.fromIterable(ids),
+          (known) => !Array.contains(targets, known)
+        ),
+        ...Artifact.sources(entry.event),
+      ])
+    }
+  }
+  return found
+}
+
+const describe = (event: Artifact.Event, id: string) => {
+  switch (event.kind) {
+    case 'add':
+      return event.chunk === id ? 'Added' : `Added as ${event.chunk}`
+    case 'remove':
+      return `Removed ${event.chunk}`
+    case 'revise':
+      return event.chunk === id ? 'Revised' : `Revised as ${event.chunk}`
+    case 'rename':
+      return event.to === id
+        ? `Renamed from ${event.from}`
+        : `Renamed from ${event.from} to ${event.to}`
+    case 'split':
+      return `Split from ${event.from} into ${Array.join(event.into, ', ')}`
+    case 'merge':
+      return `Merged ${Array.join(event.from, ', ')} into ${event.into}`
+  }
+}
 
 export const Details = ({
   artifact,
@@ -86,6 +133,7 @@ export const Details = ({
   }
 
   const essential = node.essential
+  const events = history(artifact, node.id)
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1">
@@ -110,6 +158,25 @@ export const Details = ({
           <span>{100 - essential}% accidental</span>
         </p>
       </Section>
+      {Array.isArrayNonEmpty(events) && (
+        <Section title="History">
+          <ol className="flex flex-col gap-3">
+            {Array.map(events, ({ commit, event }, index) => (
+              <li key={index} className="flex flex-col gap-0.5 text-sm">
+                <p className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium">
+                    {describe(event, node.id)}
+                  </span>
+                  <code className="font-mono text-xs text-stone-500">
+                    {String.slice(0, 12)(commit)}
+                  </code>
+                </p>
+                <p className="text-stone-700">{event.reason}</p>
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
       <Section title={count(node.files.length, 'file')}>
         <ul className="flex flex-col gap-1 text-sm">
           {Array.map(node.files, (file) => (

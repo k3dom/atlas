@@ -3,6 +3,8 @@ import {
   Context,
   Effect,
   Layer,
+  Number,
+  Option,
   Path,
   pipe,
   Schema,
@@ -59,6 +61,16 @@ export class GitError extends Schema.TaggedError<GitError>()('GitError', {
     return this.message
   }
 }
+
+export interface Diff {
+  readonly path: string
+  readonly from?: string | undefined
+  readonly added: number | undefined
+  readonly deleted: number | undefined
+}
+
+const count = (value: string | undefined) =>
+  Option.getOrUndefined(Number.parse(value ?? ''))
 
 const paths = (output: string) =>
   pipe(output, String.split('\0'), Array.filter(String.isNonEmpty))
@@ -142,7 +154,30 @@ export class Repository extends Context.Service<Repository>()(
         )
       })
 
-      return { root, relative, absolute, tracked, head, changed }
+      const diff = Effect.fn('Repository.diff')(function* (commit: string) {
+        const fields = paths(
+          yield* run('diff', '--numstat', '-z', '-M', commit, '--')
+        )
+        const files: Array<Diff> = []
+        for (let index = 0; index < fields.length; index++) {
+          const parts = String.split(fields[index] ?? '', '\t')
+          const counts = { added: count(parts[0]), deleted: count(parts[1]) }
+          const file = parts[2] ?? ''
+          if (String.isEmpty(file)) {
+            files.push({
+              from: fields[index + 1],
+              path: fields[index + 2] ?? '',
+              ...counts,
+            })
+            index += 2
+          } else {
+            files.push({ path: file, ...counts })
+          }
+        }
+        return files
+      })
+
+      return { root, relative, absolute, tracked, head, changed, diff }
     }),
   }
 ) {}

@@ -4,44 +4,46 @@ import { deepStrictEqual } from '@effect/vitest/utils'
 import { Array, Effect, FileSystem, Path, Schema, String } from 'effect'
 
 import * as Artifact from '#/artifact.ts'
-import { atlas, workspace } from '#test/fixture.ts'
+import { atlas, git, workspace } from '#test/fixture.ts'
 
 const chunk = (id: string, ...paths: ReadonlyArray<string>) => ({
   kind: 'chunk' as const,
   id,
   name: id,
   summary: `The ${id} code.`,
-  tier: 2 as const,
+  tier: 2 as Artifact.Tier,
   rationale: 'Some branching.',
   essential: 70,
   files: Array.map(paths, (path) => ({ path })),
 })
 
+const entry = chunk(
+  'entry',
+  'packages/app/src/index.ts',
+  'packages/app/src/local.ts',
+  'packages/app/src/lazy.ts'
+)
+
+const pages = chunk('pages', 'packages/app/src/page.ts')
+
+const helper = chunk(
+  'helper',
+  'packages/lib/src/helper.ts',
+  'packages/lib/src/deep.ts',
+  'packages/lib/src/ids.ts'
+)
+
+const app = (...children: ReadonlyArray<ReturnType<typeof chunk>>) => ({
+  kind: 'group' as const,
+  id: 'app',
+  name: 'App',
+  summary: 'The app.',
+  children,
+})
+
 const draft = {
   roots: ['packages/app'],
-  chunks: [
-    {
-      kind: 'group',
-      id: 'app',
-      name: 'App',
-      summary: 'The app.',
-      children: [
-        chunk(
-          'entry',
-          'packages/app/src/index.ts',
-          'packages/app/src/local.ts',
-          'packages/app/src/lazy.ts'
-        ),
-        chunk('pages', 'packages/app/src/page.ts'),
-      ],
-    },
-    chunk(
-      'helper',
-      'packages/lib/src/helper.ts',
-      'packages/lib/src/deep.ts',
-      'packages/lib/src/ids.ts'
-    ),
-  ],
+  chunks: [app(entry, pages), helper],
 }
 
 const writeDraft = Effect.fnUntraced(function* (root: string, value: unknown) {
@@ -50,6 +52,32 @@ const writeDraft = Effect.fnUntraced(function* (root: string, value: unknown) {
   const file = path.join(root, 'draft.json')
   yield* fs.writeFileString(file, JSON.stringify(value))
   return file
+})
+
+const readMap = Effect.fnUntraced(function* (root: string) {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const text = yield* fs.readFileString(path.join(root, '.atlas/map.json'))
+  return yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Artifact.Artifact)
+  )(text)
+})
+
+const edit = Effect.fnUntraced(function* (
+  root: string,
+  file: string,
+  f: (content: string) => string
+) {
+  const fs = yield* FileSystem.FileSystem
+  const path = yield* Path.Path
+  const content = yield* fs.readFileString(path.join(root, file))
+  yield* fs.writeFileString(path.join(root, file), f(content))
+})
+
+const commitAll = Effect.fnUntraced(function* (root: string) {
+  yield* git(root, 'add', '-A')
+  yield* git(root, 'commit', '--quiet', '-m', 'change')
+  return yield* git(root, 'rev-parse', 'HEAD')
 })
 
 layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
@@ -116,8 +144,6 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
     () =>
       Effect.gen(function* () {
         const { root, commit } = yield* workspace
-        const fs = yield* FileSystem.FileSystem
-        const path = yield* Path.Path
 
         const { exitCode } = yield* atlas(
           root,
@@ -126,12 +152,7 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
         )
 
         assert.strictEqual(exitCode, 0)
-        const text = yield* fs.readFileString(
-          path.join(root, '.atlas/map.json')
-        )
-        const map = yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(Artifact.Artifact)
-        )(text)
+        const map = yield* readMap(root)
         assert.strictEqual(map.commit, commit)
         deepStrictEqual(map.roots, ['packages/app'])
         deepStrictEqual(map.chunks[1], {
@@ -250,6 +271,275 @@ layer(NodeServices.layer, { timeout: 60_000 })('atlas', (it) => {
       assert.include(stderr, 'chunks[0].tier: Expected 1 | 2 | 3 | 4')
       assert.include(stderr, 'chunks[0].lines: Expected no excess property')
       assert.include(stderr, 'chunks[0].files[0]: Missing key')
+    })
+  )
+
+  it.effect(
+    'lists the files in scope that changed since the map by their chunk',
+    () =>
+      Effect.gen(function* () {
+        const { root, commit } = yield* workspace
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* Path.Path
+        yield* atlas(root, 'check', yield* writeDraft(root, draft))
+        yield* fs.writeFileString(
+          path.join(root, 'packages/app/src/extra.ts'),
+          'export const extra = 1\n'
+        )
+        yield* edit(
+          root,
+          'packages/app/src/local.ts',
+          (content) => `${content}export const other = 2\n`
+        )
+        yield* edit(root, 'packages/app/src/index.ts', (content) =>
+          String.replace("import { id } from '@ws/lib/ids'\n", '')(content)
+        )
+        yield* fs.remove(path.join(root, 'packages/app/src/lazy.ts'))
+        yield* git(
+          root,
+          'mv',
+          'packages/lib/src/deep.ts',
+          'packages/lib/src/shape.ts'
+        )
+        yield* edit(root, 'packages/lib/src/helper.ts', (content) =>
+          String.replace('./deep.ts', './shape.ts')(content)
+        )
+        yield* git(root, 'add', '-A')
+
+        const { stdout, stderr, exitCode } = yield* atlas(root, 'changes')
+
+        assert.strictEqual(exitCode, 0)
+        deepStrictEqual(String.split(stdout, '\n'), [
+          'entry',
+          '  changed  packages/app/src/index.ts  +0 -1',
+          '  changed  packages/app/src/local.ts  +1 -0',
+          '  removed  packages/app/src/lazy.ts  deleted',
+          '',
+          'helper',
+          '  changed  packages/lib/src/helper.ts  +1 -1',
+          '  renamed  packages/lib/src/shape.ts  from packages/lib/src/deep.ts  +0 -0',
+          '  removed  packages/lib/src/ids.ts  no longer in scope',
+          '',
+          'In no chunk',
+          '  added    packages/app/src/extra.ts  1 line',
+          '',
+        ])
+        assert.include(
+          stderr,
+          `7 files in the scope of packages/app differ from the map at ${String.slice(0, 12)(commit)}: 1 added, 3 changed, 1 renamed, 2 removed, in 2 chunks.`
+        )
+      })
+  )
+
+  it.effect('reports a map whose files in scope are unchanged as current', () =>
+    Effect.gen(function* () {
+      const { root, commit } = yield* workspace
+      yield* atlas(root, 'check', yield* writeDraft(root, draft))
+      yield* commitAll(root)
+
+      const { stdout, stderr, exitCode } = yield* atlas(root, 'changes')
+
+      assert.strictEqual(exitCode, 0)
+      assert.strictEqual(stdout, '')
+      assert.include(
+        stderr,
+        `No file in the scope of packages/app differs from the map at ${String.slice(0, 12)(commit)}.`
+      )
+    })
+  )
+
+  it.effect('asks for a map before it lists changes', () =>
+    Effect.gen(function* () {
+      const { root } = yield* workspace
+
+      const { stderr, exitCode } = yield* atlas(root, 'changes')
+
+      assert.strictEqual(exitCode, 1)
+      assert.include(
+        stderr,
+        'There is no map at .atlas/map.json. Build one with the map skill first.'
+      )
+    })
+  )
+
+  it.effect(
+    'prints the map as a draft that check takes back without events',
+    () =>
+      Effect.gen(function* () {
+        const { root, commit } = yield* workspace
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* Path.Path
+        yield* atlas(root, 'check', yield* writeDraft(root, draft))
+
+        const printed = yield* atlas(root, 'draft')
+        yield* fs.writeFileString(path.join(root, 'draft.json'), printed.stdout)
+        const { stderr, exitCode } = yield* atlas(root, 'check', 'draft.json')
+
+        assert.strictEqual(printed.exitCode, 0)
+        deepStrictEqual(JSON.parse(printed.stdout), {
+          roots: ['packages/app'],
+          chunks: draft.chunks,
+          events: [],
+        })
+        assert.strictEqual(exitCode, 0)
+        assert.include(
+          stderr,
+          `The chunks are the same as in the map at ${String.slice(0, 12)(commit)}.`
+        )
+        deepStrictEqual((yield* readMap(root)).history, [])
+      })
+  )
+
+  it.effect('records the events of each update in the history of the map', () =>
+    Effect.gen(function* () {
+      const { root, commit } = yield* workspace
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* Path.Path
+      yield* atlas(root, 'check', yield* writeDraft(root, draft))
+      yield* fs.writeFileString(
+        path.join(root, 'packages/app/src/extra.ts'),
+        'export const extra = 1\n'
+      )
+      const second = yield* commitAll(root)
+      const first = [
+        {
+          kind: 'rename',
+          from: 'pages',
+          to: 'views',
+          reason: 'The pages became views.',
+        },
+        {
+          kind: 'add',
+          chunk: 'extra',
+          reason: 'extra.ts holds a concern of its own.',
+        },
+      ] as const
+
+      const update = yield* atlas(
+        root,
+        'check',
+        yield* writeDraft(root, {
+          ...draft,
+          chunks: [
+            app(entry, { ...pages, id: 'views' }),
+            helper,
+            chunk('extra', 'packages/app/src/extra.ts'),
+          ],
+          events: first,
+        })
+      )
+      const third = yield* commitAll(root)
+      const merge = [
+        {
+          kind: 'merge',
+          from: ['views', 'extra'],
+          into: 'views',
+          reason: 'The views use extra.ts.',
+        },
+      ] as const
+      yield* atlas(
+        root,
+        'check',
+        yield* writeDraft(root, {
+          ...draft,
+          chunks: [
+            app(entry, {
+              ...pages,
+              id: 'views',
+              files: [
+                { path: 'packages/app/src/page.ts' },
+                { path: 'packages/app/src/extra.ts' },
+              ],
+            }),
+            helper,
+          ],
+          events: merge,
+        })
+      )
+
+      assert.strictEqual(update.exitCode, 0)
+      assert.include(
+        update.stderr,
+        `Recorded 2 events since the map at ${String.slice(0, 12)(commit)}: 1 add, 1 rename.`
+      )
+      deepStrictEqual((yield* readMap(root)).history, [
+        { commit: second, events: first },
+        { commit: third, events: merge },
+      ])
+    })
+  )
+
+  it.effect(
+    'rejects events with unknown ids and changes to chunks without events',
+    () =>
+      Effect.gen(function* () {
+        const { root, commit } = yield* workspace
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* Path.Path
+        yield* atlas(root, 'check', yield* writeDraft(root, draft))
+        const before = yield* fs.readFileString(
+          path.join(root, '.atlas/map.json')
+        )
+        const at = `the map at ${String.slice(0, 12)(commit)}`
+
+        const { stderr, exitCode } = yield* atlas(
+          root,
+          'check',
+          yield* writeDraft(root, {
+            ...draft,
+            chunks: [
+              app({ ...entry, tier: 3 }, { ...pages, id: 'views' }),
+              helper,
+            ],
+            events: [
+              { kind: 'rename', from: 'gone', to: 'views', reason: 'Moved.' },
+              { kind: 'revise', chunk: 'helper', reason: 'Rated again.' },
+              { kind: 'add', chunk: 'missing', reason: 'New code.' },
+              { kind: 'remove', chunk: 'helper', reason: 'Deleted.' },
+              { kind: 'add', chunk: 'entry', reason: 'New code.' },
+            ],
+          })
+        )
+
+        assert.strictEqual(exitCode, 1)
+        assert.include(stderr, 'has 8 problems')
+        for (const problem of [
+          `events[0], which renames "gone" to "views", names "gone", which is no chunk of ${at}.`,
+          `events[1], which revises "helper", but the chunk is the same as in ${at}.`,
+          'events[2], which adds "missing", names "missing", which is no chunk of the draft.',
+          'events[3], which removes "helper", ends "helper", but the draft still has a chunk with that id.',
+          `events[4], which adds "entry", makes "entry" a new chunk, but ${at} already has it.`,
+          '"helper" takes part in events[1] and events[3].',
+          `The chunk "pages" of ${at} is not in the draft.`,
+          `The chunk "entry" differs from ${at} in its tier.`,
+        ]) {
+          assert.include(stderr, problem)
+        }
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, '.atlas/map.json')),
+          before
+        )
+      })
+  )
+
+  it.effect('rejects events in the draft of a new map', () =>
+    Effect.gen(function* () {
+      const { root } = yield* workspace
+
+      const { stderr, exitCode } = yield* atlas(
+        root,
+        'check',
+        yield* writeDraft(root, {
+          ...draft,
+          events: [{ kind: 'add', chunk: 'entry', reason: 'New code.' }],
+        })
+      )
+
+      assert.strictEqual(exitCode, 1)
+      assert.include(
+        stderr,
+        'The draft has events, but there is no map at .atlas/map.json for them to refer to.'
+      )
     })
   )
 

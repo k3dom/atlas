@@ -1,5 +1,6 @@
 import {
   Array,
+  Effect,
   Number,
   pipe,
   Predicate,
@@ -35,14 +36,16 @@ export type Tier = typeof Tier.Type
 
 const Text = Schema.String.check(Schema.isNonEmpty(), Schema.isTrimmed())
 
+const Id = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
+).annotate({
+  description:
+    'Kebab-case id, unique across the map, that stays the same when the map is updated',
+})
+
 const tree = <File>(File: Schema.Codec<File>) => {
   const common = {
-    id: Schema.String.check(
-      Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
-    ).annotate({
-      description:
-        'Kebab-case id, unique across the map, that stays the same when the map is updated',
-    }),
+    id: Id,
     name: Text.annotate({ description: 'Short name for people' }),
     summary: Text.annotate({
       description: 'One or two sentences on what the code does',
@@ -95,9 +98,97 @@ const roots = Schema.NonEmptyArray(Schema.String).annotate({
     'Directories relative to the repository root, such as packages, whose files and the workspace files they import make up the scope',
 })
 
+const reason = Text.annotate({
+  description:
+    'Why the map changed, such as the change to the code that called for it',
+})
+
+const Several = Schema.Array(Id).check(Schema.isMinLength(2), Schema.isUnique())
+
+export const Event = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('add'), chunk: Id, reason }).annotate({
+    description: 'A new chunk, such as one for new code',
+  }),
+  Schema.Struct({ kind: Schema.Literal('remove'), chunk: Id, reason }).annotate(
+    { description: 'A chunk that is gone, such as one whose code was deleted' }
+  ),
+  Schema.Struct({
+    kind: Schema.Literal('rename'),
+    from: Id,
+    to: Id,
+    reason,
+  }).annotate({ description: 'A chunk that goes on under a new id' }),
+  Schema.Struct({
+    kind: Schema.Literal('split'),
+    from: Id,
+    into: Several,
+    reason,
+  }).annotate({
+    description:
+      'A chunk whose files now make up several chunks. One of them can keep its id',
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('merge'),
+    from: Several,
+    into: Id,
+    reason,
+  }).annotate({
+    description:
+      'Chunks whose files now make up one chunk, which can keep the id of one of them',
+  }),
+  Schema.Struct({ kind: Schema.Literal('revise'), chunk: Id, reason }).annotate(
+    {
+      description:
+        'A chunk that keeps its id and changes otherwise, such as in its files or its tier',
+    }
+  ),
+]).annotate({ identifier: 'Event' })
+
+export type Event = typeof Event.Type
+
+export const sources = (event: Event): ReadonlyArray<string> => {
+  switch (event.kind) {
+    case 'add':
+      return []
+    case 'remove':
+    case 'revise':
+      return [event.chunk]
+    case 'rename':
+    case 'split':
+      return [event.from]
+    case 'merge':
+      return event.from
+  }
+}
+
+export const targets = (event: Event): ReadonlyArray<string> => {
+  switch (event.kind) {
+    case 'remove':
+      return []
+    case 'add':
+    case 'revise':
+      return [event.chunk]
+    case 'rename':
+      return [event.to]
+    case 'split':
+      return event.into
+    case 'merge':
+      return [event.into]
+  }
+}
+
+const none = <S extends Schema.Top>(schema: S) =>
+  schema.pipe(Schema.withDecodingDefaultKey(Effect.succeed([])))
+
 export const Draft = Schema.Struct({
   roots,
   chunks: Schema.NonEmptyArray(tree(Schema.Struct({ path: Path, mixed }))),
+  events: none(
+    Schema.Array(Event).annotate({
+      description:
+        'How the chunks differ from those of the map in .atlas/map.json, so that every change to the map has a reason. A chunk takes part in at most one event. A new map has none',
+    })
+  ),
 }).annotate({
   title: 'Draft of an atlas map',
   description:
@@ -114,13 +205,28 @@ const MeasuredFile = Schema.Struct({
 
 export type MeasuredFile = typeof MeasuredFile.Type
 
+const Commit = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/u))
+
 export const Artifact = Schema.Struct({
   version: Schema.Literal(1),
-  commit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/u)).annotate({
+  commit: Commit.annotate({
     description: 'SHA of the commit the map describes',
   }),
   roots,
   chunks: Schema.NonEmptyArray(tree(MeasuredFile)),
+  history: none(
+    Schema.Array(
+      Schema.Struct({
+        commit: Commit.annotate({
+          description: 'SHA of the commit the update brought the map to',
+        }),
+        events: Schema.NonEmptyArray(Event),
+      })
+    ).annotate({
+      description:
+        'The updates of the map that changed its chunks, oldest first, with their events',
+    })
+  ),
 }).annotate({
   title: 'Atlas map',
   description:

@@ -1,9 +1,20 @@
-import { Array, Effect, FileSystem, pipe, Record, Schema } from 'effect'
+import {
+  Array,
+  Effect,
+  FileSystem,
+  Option,
+  Order,
+  pipe,
+  Record,
+  Schema,
+  String,
+} from 'effect'
 import { CliError } from 'effect/cli'
 
 import * as Artifact from '#/artifact.ts'
 import * as Repository from '#/repository.ts'
 import * as Scope from '#/scope.ts'
+import * as Store from '#/store.ts'
 
 export class DraftError extends Schema.TaggedError<DraftError>()('DraftError', {
   draft: Schema.String,
@@ -103,6 +114,192 @@ const problems = Effect.fnUntraced(function* (
   return [...ids, ...Array.flatten(files), ...unassigned]
 })
 
+const describe = (event: Artifact.Event) => {
+  switch (event.kind) {
+    case 'add':
+      return `adds "${event.chunk}"`
+    case 'remove':
+      return `removes "${event.chunk}"`
+    case 'revise':
+      return `revises "${event.chunk}"`
+    case 'rename':
+      return `renames "${event.from}" to "${event.to}"`
+    case 'split':
+      return `splits "${event.from}" into ${quote(event.into)}`
+    case 'merge':
+      return `merges ${quote(event.from)} into "${event.into}"`
+  }
+}
+
+const listed = (
+  chunk: Artifact.Chunk<{ readonly path: string; readonly mixed?: boolean }>
+) =>
+  pipe(
+    chunk.files,
+    Array.map((file) => `${file.path}${file.mixed === true ? ' mixed' : ''}`),
+    Array.sort(Order.String),
+    Array.join('\n')
+  )
+
+const differences = (
+  before: Artifact.Chunk<Artifact.MeasuredFile>,
+  after: Artifact.Chunk<{ readonly path: string; readonly mixed?: boolean }>
+) =>
+  Array.filter(
+    ['name', 'summary', 'tier', 'rationale', 'essential', 'files'] as const,
+    (field) =>
+      field === 'files'
+        ? listed(before) !== listed(after)
+        : before[field] !== after[field]
+  )
+
+const history = (
+  draft: Artifact.Draft,
+  previous: Option.Option<Artifact.Artifact>
+): Array<string> => {
+  if (Option.isNone(previous)) {
+    return Array.isReadonlyArrayNonEmpty(draft.events)
+      ? [
+          `The draft has events, but there is no map at ${Store.path} for them to refer to. Remove the events to build a new map.`,
+        ]
+      : []
+  }
+  const at = `the map at ${String.slice(0, 12)(previous.value.commit)}`
+  const before = Record.fromIterableWith(
+    Artifact.chunks(previous.value.chunks),
+    (chunk) => [chunk.id, chunk]
+  )
+  const after = Record.fromIterableWith(
+    Artifact.chunks(draft.chunks),
+    (chunk) => [chunk.id, chunk]
+  )
+
+  const named = Array.flatMap(draft.events, (event, index) => {
+    const label = `events[${index}], which ${describe(event)},`
+    const from = Artifact.sources(event)
+    const to = Artifact.targets(event)
+    const revised =
+      event.kind === 'revise'
+        ? { before: before[event.chunk], after: after[event.chunk] }
+        : undefined
+    const unchanged =
+      revised?.before !== undefined &&
+      revised.after !== undefined &&
+      !Array.isArrayNonEmpty(differences(revised.before, revised.after))
+    return [
+      ...pipe(
+        from,
+        Array.filter((id) => !Record.has(before, id)),
+        Array.map(
+          (id) =>
+            `${label} names "${id}", which is no chunk of ${at}. Start events from the ids of the chunks in ${Store.path}.`
+        )
+      ),
+      ...pipe(
+        to,
+        Array.filter((id) => !Record.has(after, id)),
+        Array.map(
+          (id) =>
+            `${label} names "${id}", which is no chunk of the draft. Use the ids of the chunks the event leads to.`
+        )
+      ),
+      ...pipe(
+        from,
+        Array.filter(
+          (id) =>
+            !Array.contains(to, id) &&
+            Record.has(before, id) &&
+            Record.has(after, id)
+        ),
+        Array.map(
+          (id) =>
+            `${label} ends "${id}", but the draft still has a chunk with that id. Drop the chunk, or record a split or merge that keeps its id.`
+        )
+      ),
+      ...pipe(
+        to,
+        Array.filter(
+          (id) =>
+            !Array.contains(from, id) &&
+            Record.has(before, id) &&
+            Record.has(after, id)
+        ),
+        Array.map(
+          (id) =>
+            `${label} makes "${id}" a new chunk, but ${at} already has it. Record a revise event for a chunk that keeps its id.`
+        )
+      ),
+      ...(unchanged
+        ? [`${label} but the chunk is the same as in ${at}. Remove the event.`]
+        : []),
+    ]
+  })
+
+  const involved = pipe(
+    draft.events,
+    Array.flatMap((event, index) =>
+      pipe(
+        [...Artifact.sources(event), ...Artifact.targets(event)],
+        Array.dedupe,
+        Array.map((id) => ({ id, label: `events[${index}]` }))
+      )
+    ),
+    Array.groupBy((entry) => entry.id)
+  )
+  const repeated = pipe(
+    Record.toEntries(involved),
+    Array.filter(([, entries]) => entries.length > 1),
+    Array.map(
+      ([id, entries]) =>
+        `"${id}" takes part in ${Array.join(
+          Array.map(entries, (entry) => entry.label),
+          ' and '
+        )}. Record each change to a chunk in one event, such as a split that also revises the chunk that keeps its id.`
+    )
+  )
+
+  const ended = new Set(Array.flatMap(draft.events, Artifact.sources))
+  const started = new Set(Array.flatMap(draft.events, Artifact.targets))
+  const kept = new Set(
+    Array.flatMap(draft.events, (event) =>
+      Array.intersection(Artifact.sources(event), Artifact.targets(event))
+    )
+  )
+  const gone = pipe(
+    Record.keys(before),
+    Array.filter((id) => !Record.has(after, id) && !ended.has(id)),
+    Array.map(
+      (id) =>
+        `The chunk "${id}" of ${at} is not in the draft. Record why with a remove, rename, split or merge event.`
+    )
+  )
+  const fresh = pipe(
+    Record.keys(after),
+    Array.filter((id) => !Record.has(before, id) && !started.has(id)),
+    Array.map(
+      (id) =>
+        `"${id}" is a new chunk. Record why with an add event, or with a rename, split or merge event if it continues chunks of ${at}.`
+    )
+  )
+  const changed = pipe(
+    Record.toEntries(after),
+    Array.flatMap(([id, chunk]) => {
+      const previousChunk = before[id]
+      if (previousChunk === undefined || kept.has(id)) {
+        return []
+      }
+      const fields = differences(previousChunk, chunk)
+      return Array.isArrayNonEmpty(fields)
+        ? [
+            `The chunk "${id}" differs from ${at} in its ${Array.join(fields, ', ')}. Record why with a revise event.`,
+          ]
+        : []
+    })
+  )
+
+  return [...named, ...repeated, ...gone, ...fresh, ...changed]
+}
+
 export const read = Effect.fn('Check.read')(function* (
   draftPath: string,
   command: DraftError['command']
@@ -126,11 +323,14 @@ export const read = Effect.fn('Check.read')(function* (
 
 export const run = Effect.fn('Check.run')(function* (draftPath: string) {
   const repository = yield* Repository.Repository
-  const fs = yield* FileSystem.FileSystem
   const draft = yield* read(draftPath, 'check')
 
   const scope = yield* Scope.resolve(draft.roots)
-  const found = yield* problems(draft, scope)
+  const previous = yield* Store.find()
+  const found = [
+    ...(yield* problems(draft, scope)),
+    ...history(draft, previous),
+  ]
   if (Array.isArrayNonEmpty(found)) {
     return yield* new DraftError({
       draft: draftPath,
@@ -143,28 +343,30 @@ export const run = Effect.fn('Check.run')(function* (draftPath: string) {
     file.path,
     file.lines,
   ])
+  const commit = yield* repository.head()
   const artifact: Artifact.Artifact = {
     version: 1,
-    commit: yield* repository.head(),
+    commit,
     roots: scope.roots,
     chunks: Artifact.mapFiles(draft.chunks, (file) => ({
       ...file,
       lines: lines[file.path] ?? 0,
     })),
+    history: [
+      ...Option.match(previous, {
+        onNone: () => [],
+        onSome: (map) => map.history,
+      }),
+      ...(Array.isReadonlyArrayNonEmpty(draft.events)
+        ? [{ commit, events: draft.events }]
+        : []),
+    ],
   }
-  const encoded = yield* Schema.encodeEffect(Artifact.Artifact)(artifact).pipe(
-    Effect.orDie
-  )
-  const target = repository.absolute('.atlas/map.json')
-  yield* fs
-    .makeDirectory(repository.absolute('.atlas'), { recursive: true })
-    .pipe(Effect.orDie)
-  yield* fs
-    .writeFileString(target, `${JSON.stringify(encoded, null, 2)}\n`)
-    .pipe(Effect.orDie)
+  yield* Store.write(artifact)
   return {
     artifact,
-    path: repository.relative(target),
+    previous,
+    events: draft.events,
     changed: yield* repository.changed(
       Array.map(scope.files, (file) => file.path)
     ),
